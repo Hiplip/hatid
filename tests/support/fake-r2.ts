@@ -92,7 +92,7 @@ export class FakeR2 {
     if (url.host !== `${this.accountId}.r2.cloudflarestorage.com`) return xmlError(400, "InvalidHost");
     this.log.push({ method, path: url.pathname, query: url.search });
     if (this.failNext > 0) { this.failNext--; return xmlError(500, "InternalError"); }
-    const denied = url.searchParams.has("X-Amz-Signature") ? await this.verifyPresigned(method, url, headers, body) : this.verifyHeaderAuth(headers);
+    const denied = url.searchParams.has("X-Amz-Signature") ? await this.verifyPresigned(method, url, headers, body) : await this.verifyHeaderAuth(method, url, headers, body);
     if (denied) return denied;
 
     const [, bucketName = "", ...rest] = url.pathname.split("/");
@@ -136,9 +136,39 @@ export class FakeR2 {
     return xmlError(400, "UnsupportedOperation");
   }
 
-  private verifyHeaderAuth(headers: Headers): Response | null {
-    const auth = headers.get("authorization") ?? "";
-    return auth.startsWith("AWS4-HMAC-SHA256") && auth.includes(`Credential=${this.accessKeyId}/`) ? null : xmlError(403, "AccessDenied");
+  /** Re-signs a header-authenticated request with aws4fetch and compares signatures, then checks the payload hash. */
+  private async verifyHeaderAuth(method: string, url: URL, headers: Headers, body: Uint8Array): Promise<Response | null> {
+    const m = /^AWS4-HMAC-SHA256 Credential=([^/,\s]+)\/(\d{8})\/([^/,\s]+)\/s3\/aws4_request, ?SignedHeaders=([^,\s]+), ?Signature=([0-9a-f]{64})$/.exec(headers.get("authorization") ?? "");
+    if (!m) return xmlError(403, "AccessDenied", headers.has("authorization") ? "Malformed Authorization header" : "AccessDenied");
+    const accessKey = m[1]!;
+    const signedList = m[4]!;
+    const signature = m[5]!;
+    if (accessKey !== this.accessKeyId) return xmlError(403, "AccessDenied", "Unknown access key");
+    const amzDate = headers.get("x-amz-date") ?? "";
+    if (!/^\d{8}T\d{6}Z$/.test(amzDate)) return xmlError(403, "AccessDenied", "Missing x-amz-date");
+    const payloadHash = headers.get("x-amz-content-sha256");
+    if (payloadHash === null) return xmlError(403, "AccessDenied", "Missing x-amz-content-sha256");
+
+    const toSign = new Headers({ "x-amz-content-sha256": payloadHash });
+    for (const name of signedList.split(";").filter(Boolean)) {
+      if (name === "host") continue;
+      const value = headers.get(name);
+      if (value === null) return xmlError(403, "AccessDenied", `Missing signed header ${name}`);
+      toSign.set(name, value);
+    }
+    const signer = new AwsV4Signer({
+      url: url.toString(), method, headers: toSign, accessKeyId: this.accessKeyId, secretAccessKey: this.secretAccessKey,
+      service: "s3", region: "auto", datetime: amzDate, allHeaders: true,
+    });
+    const expected = /Signature=([0-9a-f]+)$/.exec((await signer.sign()).headers.get("authorization") ?? "")?.[1];
+    if (expected !== signature) return xmlError(403, "SignatureDoesNotMatch");
+
+    if (payloadHash !== "UNSIGNED-PAYLOAD") {
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", body as Uint8Array<ArrayBuffer>));
+      const hex = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+      if (payloadHash !== hex) return xmlError(403, "XAmzContentSHA256Mismatch");
+    }
+    return null;
   }
 
   private async verifyPresigned(method: string, url: URL, headers: Headers, body: Uint8Array): Promise<Response | null> {
