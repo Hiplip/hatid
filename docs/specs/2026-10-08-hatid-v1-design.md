@@ -435,3 +435,30 @@ Results are recorded in `docs/specs/2026-10-08-r2-verification.md`, and this spe
    - Routes use `datePrefix: false` and no file name or extension in keys.
    - `input` holds identifiers only.
    - `fileName` is either an encrypted base64url string or omitted.
+
+---
+
+## Implementation notes (v0.1.0)
+
+Deviations from this spec and decisions made during implementation:
+
+- `low-level/` is a directory.
+- `publicUrl` is computed from `capabilities.publicBaseUrl` rather than being a backend method.
+- Extra error codes: `INTERNAL` (server) and `NETWORK`/`CANCELED` (client-only).
+- `CONFIG` messages are generic on the wire.
+- The client `keyFileName` option.
+- The multipart token payload includes `size`, `partSize` and `input`.
+- `deleteObjects` uses single deletes in v1.
+- `defineUploads.withContext<T>()`.
+- `createR2Client` options `fetch`, `publicCacheControl` and `signContentLength`.
+- Live R2 verification ran against `hatid-sandbox` / `hatid-sandbox-public`; V8 (CORS wildcard) not tested by design (least privilege) → README uses the explicit header list and two CORS policies (private PUT/GET/HEAD; public GET), set in the Cloudflare dashboard; the app token needs only Object Read & Write.
+- §2.5 idempotent path refined: `inspect` checks the receipt first, so a receipt means "confirmed" even if a pending object lingers (which is then deleted after the owner check); a failed `onConfirmed` re-checks for a receipt before compensating, so it never deletes a copy another confirm already committed (a narrow race window remains and is documented).
+- The receipt stores the full signed metadata (a superset of the fields listed in §2.5 step 9).
+- R2 gzips HEAD responses for compressible types and omits Content-Length; hatid HEADs with `accept-encoding: identity` and treats a missing size as a retryable `STORAGE` error (never 0). Found by the live contract suite.
+- Multipart actions run `rateLimit` inside the shared authorize step, i.e. before the token-owner equality check (spec §2.6 lists the reverse order; effect: a non-owner spends their own budget before CONFIRM_REJECTED).
+- Confirm checks storage before auth/rateLimit (spec order), so requests for missing keys reach R2 (one HEAD) without hitting rateLimit; the README recommends request-level rate limiting in front.
+- tRPC: `createUploadRouter`'s procedures take untyped (passthrough) input; route/input types are checked on the client via `trpcTransport<typeof uploads>(trpcClient.upload)` + `useUpload`; its return type is the five-procedure record, so nest it under `t.router({ upload: … })` (not `mergeRouters`).
+- Browser multipart: canceled or incomplete uploads never call `complete`; a server reply missing a signed part is a retryable error.
+- Queue: app callbacks can't change item state; non-HatidError throws map to `INTERNAL` (non-retryable).
+- `/react` build keeps `"use client"` via `treeshake: false` on the react tsup config.
+- Tooling: pnpm pinned to 10.34.6, TypeScript ^5.9 (TS 7 breaks tsup dts); examples/next uses Next 16 (`proxy.ts`) and wires the public bucket only when both R2_PUBLIC_BUCKET and R2_PUBLIC_BASE_URL are set.
