@@ -8,6 +8,11 @@ describe("cleanDisplayName", () => {
     expect(cleanDisplayName("evil‮txt.exe")).toBe("eviltxt.exe");
     expect(cleanDisplayName("é")).toBe("é");
   });
+  it("strips lone UTF-16 surrogates but keeps valid pairs", () => {
+    expect(cleanDisplayName("a\ud800b.txt")).toBe("ab.txt");
+    expect(cleanDisplayName("\udc00")).toBeUndefined();
+    expect(cleanDisplayName("😀.png")).toBe("😀.png");
+  });
   it("keeps base64url ciphertext intact", () => {
     const ct = "q2Vf-Zx_9AbC0123456789-_";
     expect(cleanDisplayName(ct)).toBe(ct);
@@ -41,5 +46,7 @@ describe("contentDisposition", () => {
     expect(contentDisposition(`a"b;c'(1)*.txt`)).toBe(`attachment; filename="a_b;c'(1)*.txt"; filename*=UTF-8''a%22b%3Bc%27%281%29%2A.txt`);
     expect(contentDisposition("😀.png")).toContain("filename*=UTF-8''%F0%9F%98%80.png");
     expect(contentDisposition("   ")).toContain(`filename="download"`);
+    expect(() => contentDisposition("\ud800.txt")).not.toThrow();
+    expect(contentDisposition("\ud800.txt")).toContain("filename*=UTF-8''.txt");
   });
 });
