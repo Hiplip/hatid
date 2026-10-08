@@ -117,8 +117,9 @@ export function runBackendContract(name: string, setup: () => ContractEnv | Prom
 
     it("cleanup removes stale unconfirmed uploads", async () => {
       const { issued } = await put();
-      await sleep(1500);
-      const result = await cleanupUnconfirmed(env.backend, { olderThan: "1s", receiptTtl: "1000d", limit: 1000 });
+      // 2s margin (4s sleep vs 2s cutoff) covers clock skew between the runner and R2.
+      await sleep(4000);
+      const result = await cleanupUnconfirmed(env.backend, { olderThan: "2s", receiptTtl: "1000d", limit: 1000 });
       expect(result.deleted.pending).toBeGreaterThanOrEqual(1);
       await expect(confirmUpload(env.backend, { key: issued.key, owner: "alice" })).rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
     });
