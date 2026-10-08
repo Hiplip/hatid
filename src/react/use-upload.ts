@@ -12,6 +12,7 @@ export type UseUploadOptions<U, R extends RouteName<U>> = {
 export type UseUploadResult<U, R extends RouteName<U>> = QueueSnapshot & {
   upload: (sources: UploadSource | UploadSource[], opts?: { input?: RouteInput<U, R> }) => Promise<BatchResult[]>;
   cancel: (id?: string) => void;
+  /** Retry an item that failed with a retryable error or was cancelled. Resolves when it settles again. */
   retry: (id: string) => Promise<void>;
   reset: () => void;
 };

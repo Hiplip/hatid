@@ -95,6 +95,40 @@ describe("UploadQueue", () => {
     expect(q.getSnapshot().items[1]!.status).toBe("error");
   });
 
+  it("retry re-issues a cancelled item (queued or mid-upload)", async () => {
+    const t = transport();
+    let hold = true;
+    FakeXhr.script = (x) => { if (!hold) queueMicrotask(() => x.respond(200, { etag: '"e"' })); };
+    const q = new UploadQueue({ transport: t, route: "doc", concurrency: 1, createXhr: createFakeXhr });
+    const done = q.upload([file("a"), file("b")]);
+    await vi.waitFor(() => expect(FakeXhr.all).toHaveLength(1));
+    q.cancel();
+    const results = await done;
+    expect(results.map((r) => [r.status, r.error?.retryable])).toEqual([["canceled", true], ["canceled", true]]);
+    hold = false;
+    await Promise.all(results.map((r) => q.retry(r.id)));
+    expect(q.getSnapshot().items.map((i) => i.status)).toEqual(["success", "success"]);
+    expect(t.issue).toHaveBeenCalledTimes(3);
+  });
+
+  it("retry re-confirms a cancelled item whose bytes were already uploaded", async () => {
+    const t = transport();
+    t.confirm.mockImplementationOnce((_r: unknown, signal: AbortSignal) => new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(new HatidError("CANCELED", "Upload canceled")));
+    }));
+    const q = new UploadQueue({ transport: t, route: "doc", createXhr: createFakeXhr });
+    const done = q.upload(file("a"));
+    await vi.waitFor(() => expect(t.confirm).toHaveBeenCalledOnce());
+    q.cancel();
+    const [r] = await done;
+    expect(r!.status).toBe("canceled");
+    await q.retry(r!.id);
+    expect(t.issue).toHaveBeenCalledOnce();
+    expect(FakeXhr.all).toHaveLength(1);
+    expect(t.confirm).toHaveBeenCalledTimes(2);
+    expect(q.getSnapshot().items[0]!.status).toBe("success");
+  });
+
   it("cancels in-flight and queued items", async () => {
     FakeXhr.script = () => {};
     const q = new UploadQueue({ transport: transport(), route: "doc", concurrency: 1, createXhr: createFakeXhr });

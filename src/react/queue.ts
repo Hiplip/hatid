@@ -110,7 +110,8 @@ export class UploadQueue {
 
   retry(id: string): Promise<void> {
     const item = this.items.find((i) => i.id === id);
-    if (!item || item.status !== "error" || !item.error?.retryable) return Promise.resolve();
+    // Cancelled items are retryable too: re-issued from scratch, or re-confirmed if their bytes already reached R2.
+    if (!item || (item.status !== "error" && item.status !== "canceled") || !item.error?.retryable) return Promise.resolve();
     if (!item.uploaded) {
       if (item.multipart) this.abortMultipart(item);
       item.multipart = undefined;
