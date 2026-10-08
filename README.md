@@ -333,19 +333,19 @@ export type AppRouter = typeof appRouter;
 ```tsx
 // client
 import { useUpload } from "@hiplip/hatid/react";
-import { trpcTransport, type TrpcUploadClient } from "@hiplip/hatid/trpc";
+import { trpcTransport } from "@hiplip/hatid/trpc";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import type { AppRouter, uploads } from "../server/trpc";
 
 const trpcClient = createTRPCClient<AppRouter>({ links: [httpBatchLink({ url: "/api/trpc" })] });
-const transport = trpcTransport<typeof uploads>(trpcClient.upload as TrpcUploadClient);
+const transport = trpcTransport<typeof uploads>(trpcClient.upload);
 
 export function useAttachmentUpload() {
   return useUpload({ transport, route: "attachment" }); // route names are checked here
 }
 ```
 
-`createUploadRouter` adds five mutations (`issue`, `confirm`, `signParts`, `complete`, `abort`). Be aware that these procedures are untyped passthroughs: hatid has no `@trpc/server` type dependency, so the router itself doesn't carry route types. Because the router is untyped, `trpcClient.upload` needs the `as TrpcUploadClient` cast shown above. The type safety is on the client: passing `typeof uploads` to `trpcTransport` makes `useUpload` check route names and `input` shapes. `auth` is still required on every route, even behind `protectedProcedure`, because it is what binds an upload to its owner at issue and confirm.
+`createUploadRouter` adds five mutations (`issue`, `confirm`, `signParts`, `complete`, `abort`). The router keeps those five keys in its type, so `trpcClient.upload` from a real tRPC client goes straight into `trpcTransport` with no cast. The procedures themselves take untyped input (hatid has no `@trpc/server` type dependency), so the route checks happen on the client: passing `typeof uploads` to `trpcTransport` makes `useUpload` check route names and `input` shapes. `auth` is still required on every route, even behind `protectedProcedure`, because it is what binds an upload to its owner at issue and confirm.
 
 ## Downloads and deletes
 

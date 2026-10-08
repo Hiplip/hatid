@@ -3,11 +3,13 @@ import type { Transport } from "../react/types";
 import { runUploadAction, type ActionOutcome } from "../server/protocol";
 import type { AnyUploads, Uploads } from "../server/routes";
 
-// Structural shapes so hatid needs no runtime import of @trpc/server.
-type ProcedureLike = {
-  input: (parser: (value: unknown) => unknown) => { mutation: (resolver: (opts: any) => Promise<unknown>) => unknown };
+// Structural shapes so hatid needs no runtime (or type) import of @trpc/server.
+// `TProc` captures the concrete mutation procedure type your `procedure` builds.
+type ProcedureLike<TProc> = {
+  input: (parser: (value: unknown) => unknown) => { mutation: (resolver: (opts: any) => Promise<unknown>) => TProc };
 };
-type RouterFactory<TRouter> = { router: (procedures: any) => TRouter };
+type UploadProcedures<TProc> = { issue: TProc; confirm: TProc; signParts: TProc; complete: TProc; abort: TProc };
+type RouterFactory = { router: (procedures: any) => unknown };
 
 export type { ActionOutcome };
 
@@ -16,20 +18,26 @@ export type { ActionOutcome };
  * Hook `ctx` is your tRPC context: define routes with `defineUploads.withContext<Context>()`.
  * `auth` stays required on every route even when `procedure` is already protected.
  *
- * The returned router's procedures are untyped passthroughs (hatid has no @trpc/server type
- * dependency). Route names and inputs are type-checked on the client instead, via
- * `trpcTransport<typeof uploads>(trpcClient.upload)` together with `useUpload`.
+ * The return type keeps the five procedure keys (typed structurally, no @trpc/server type
+ * dependency), so a real client's `trpcClient.upload` is accepted by `trpcTransport` without a
+ * cast. The procedures take untyped input; route names and inputs are type-checked on the client
+ * via `trpcTransport<typeof uploads>(trpcClient.upload)` together with `useUpload`.
  */
-export function createUploadRouter<TRouter, TCtx>(opts: { t: RouterFactory<TRouter>; procedure: ProcedureLike; uploads: Uploads<TCtx, any> }): TRouter {
+export function createUploadRouter<TProc, TCtx>(opts: {
+  t: RouterFactory; procedure: ProcedureLike<TProc>; uploads: Uploads<TCtx, any>;
+}): UploadProcedures<TProc> {
   const mutation = (action: string) =>
     opts.procedure
       .input((value: unknown) => value)
       .mutation(({ ctx, input }: { ctx: unknown; input: unknown }) =>
         runUploadAction(opts.uploads as AnyUploads, ctx, { ...(typeof input === "object" && input !== null ? input : {}), action }));
-  return opts.t.router({
+  const procedures: UploadProcedures<TProc> = {
     issue: mutation("issue"), confirm: mutation("confirm"), signParts: mutation("signParts"),
     complete: mutation("complete"), abort: mutation("abort"),
-  });
+  };
+  // A tRPC v11 router is `Router & TRecord`, so the five procedures are own properties of the
+  // returned router: typing it as that record keeps the keys (and is how tRPC nests it either way).
+  return opts.t.router(procedures) as UploadProcedures<TProc>;
 }
 
 type Mutation = { mutate: (input: any, opts?: { signal?: AbortSignal }) => Promise<unknown> };
