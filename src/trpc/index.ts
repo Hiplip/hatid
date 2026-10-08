@@ -15,6 +15,10 @@ export type { ActionOutcome };
  * Five tRPC mutations (issue, confirm, signParts, complete, abort) backed by `uploads`.
  * Hook `ctx` is your tRPC context: define routes with `defineUploads.withContext<Context>()`.
  * `auth` stays required on every route even when `procedure` is already protected.
+ *
+ * The returned router's procedures are untyped passthroughs (hatid has no @trpc/server type
+ * dependency). Route names and inputs are type-checked on the client instead, via
+ * `trpcTransport<typeof uploads>(trpcClient.upload)` together with `useUpload`.
  */
 export function createUploadRouter<TRouter, TCtx>(opts: { t: RouterFactory<TRouter>; procedure: ProcedureLike; uploads: Uploads<TCtx, any> }): TRouter {
   const mutation = (action: string) =>
