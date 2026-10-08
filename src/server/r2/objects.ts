@@ -16,11 +16,15 @@ export async function issueUpload(ctx: R2Context, r: Req<"issueUpload">) {
 }
 
 async function headRaw(ctx: R2Context, kind: BucketKind, key: string): Promise<(ObjectInfo & { metadata: Record<string, string> }) | null> {
-  const res = await send(ctx, objectUrl(ctx, kind, key), { method: "HEAD" });
+  // Without identity, R2's edge gzips compressible types (text/*, json, ...) and omits Content-Length.
+  const res = await send(ctx, objectUrl(ctx, kind, key), { method: "HEAD", headers: { "accept-encoding": "identity" } });
   if (res.status === 404) return null;
   if (res.status !== 200) throw new HatidError("STORAGE", `R2 HeadObject failed (HTTP ${res.status})`);
+  const length = res.headers.get("content-length");
+  // Never fall back to 0: a valid upload must not be judged (and deleted) because its size was unreadable.
+  if (length === null || !/^\d+$/.test(length)) throw new HatidError("STORAGE", "R2 HeadObject returned no Content-Length");
   return {
-    size: Number(res.headers.get("content-length") ?? "0"),
+    size: Number(length),
     contentType: res.headers.get("content-type") ?? "",
     etag: res.headers.get("etag") ?? "",
     lastModified: Date.parse(res.headers.get("last-modified") ?? "") || 0,

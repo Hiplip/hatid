@@ -77,7 +77,7 @@ describe("FakeR2 header-authenticated requests", () => {
     const aws = clientFor(fake);
     fake.putObject("priv-bucket", "k", { body: new Uint8Array(5), contentType: "text/plain" });
 
-    const head = await fake.fetch(await aws.sign(objUrl(fake), { method: "HEAD" }));
+    const head = await fake.fetch(await aws.sign(objUrl(fake), { method: "HEAD", headers: { "accept-encoding": "identity" } }));
     expect(head.status).toBe(200);
     expect(head.headers.get("content-length")).toBe("5");
 
@@ -134,5 +134,22 @@ describe("FakeR2 header-authenticated requests", () => {
     const signed = await clientFor(fake).sign(objUrl(fake), { method: "PUT", headers: { "x-amz-content-sha256": sha256Abc }, body: "abc" });
     const res = await fake.fetch(objUrl(fake), { method: "PUT", headers: Object.fromEntries(signed.headers), body: "abd" });
     expect(await failure(res)).toEqual({ status: 403, code: "XAmzContentSHA256Mismatch", message: "XAmzContentSHA256Mismatch" });
+  });
+});
+
+describe("FakeR2 compressible content", () => {
+  it("omits Content-Length for text/plain unless Accept-Encoding: identity is sent", async () => {
+    const fake = new FakeR2();
+    const aws = clientFor(fake);
+    fake.putObject("priv-bucket", "k", { body: new Uint8Array(5), contentType: "text/plain" });
+    fake.putObject("priv-bucket", "bin", { body: new Uint8Array(5), contentType: "application/octet-stream" });
+    const plain = await fake.fetch(await aws.sign(objUrl(fake), { method: "HEAD" }));
+    expect(plain.headers.get("content-encoding")).toBe("gzip");
+    expect(plain.headers.get("content-length")).toBeNull();
+    const identity = await fake.fetch(await aws.sign(objUrl(fake), { method: "HEAD", headers: { "accept-encoding": "identity" } }));
+    expect(identity.headers.get("content-length")).toBe("5");
+    expect(identity.headers.get("content-encoding")).toBeNull();
+    const bin = await fake.fetch(await aws.sign(objUrl(fake, "bin"), { method: "HEAD" }));
+    expect(bin.headers.get("content-length")).toBe("5");
   });
 });

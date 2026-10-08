@@ -118,3 +118,27 @@ describe("custom fetch", () => {
     expect(await r2.head({ key: "p/1", bucket: "private" })).toMatchObject({ size: 1 });
   });
 });
+
+describe("object size reads (R2 gzips compressible HEADs without Content-Length)", () => {
+  it("head and inspect return the true size of a text/plain object", async () => {
+    const { r2, fake } = makeR2();
+    fake.putObject("priv-bucket", "pending/a/k", { body: new Uint8Array(7000), contentType: "text/plain" });
+    expect(await r2.head({ key: "pending/a/k", bucket: "private" })).toMatchObject({ size: 7000 });
+    expect(await r2.inspect({ key: "pending/a/k" })).toMatchObject({ state: "pending", size: 7000 });
+  });
+
+  it("throws STORAGE instead of reporting size 0 when HEAD has no Content-Length", async () => {
+    const fake = new FakeR2();
+    const stripping = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await fake.fetch(input, init);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      if (method !== "HEAD") return res;
+      const h = new Headers(res.headers);
+      h.delete("content-length");
+      return new Response(null, { status: res.status, headers: h });
+    };
+    const r2 = createR2Client({ ...fake.creds(), buckets: { private: "priv-bucket" }, fetch: stripping });
+    fake.putObject("priv-bucket", "p/1", { body: new Uint8Array(3) });
+    await expect(r2.head({ key: "p/1", bucket: "private" })).rejects.toMatchObject({ code: "STORAGE", message: "R2 HeadObject returned no Content-Length" });
+  });
+});

@@ -38,6 +38,8 @@ function metaFrom(headers: Headers): Record<string, string> {
   return out;
 }
 
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript|xml)\b|image\/svg\+xml\b)/i;
+
 export class FakeR2 {
   readonly accountId: string;
   readonly accessKeyId: string;
@@ -124,8 +126,14 @@ export class FakeR2 {
     if (method === "HEAD" || method === "GET") {
       const obj = bucket.get(key);
       if (!obj) return method === "HEAD" ? new Response(null, { status: 404 }) : xmlError(404, "NoSuchKey");
-      const h = new Headers({ "content-length": String(obj.body.byteLength), "content-type": obj.contentType, etag: obj.etag,
-        "last-modified": new Date(obj.lastModified).toUTCString() });
+      const h = new Headers({ "content-type": obj.contentType, etag: obj.etag, "last-modified": new Date(obj.lastModified).toUTCString() });
+      // Real R2 (Cloudflare edge) gzips compressible types unless the request says identity, and then sends no
+      // Content-Length. Simplification: GET still returns the raw body; only the headers matter to our code.
+      if (COMPRESSIBLE.test(obj.contentType) && headers.get("accept-encoding")?.trim().toLowerCase() !== "identity") {
+        h.set("content-encoding", "gzip");
+      } else {
+        h.set("content-length", String(obj.body.byteLength));
+      }
       for (const [k, v] of Object.entries(obj.meta)) h.set(`x-amz-meta-${k}`, v);
       if (obj.cacheControl) h.set("cache-control", obj.cacheControl);
       const cd = q.get("response-content-disposition");
