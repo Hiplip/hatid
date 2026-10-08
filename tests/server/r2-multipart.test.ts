@@ -1,5 +1,6 @@
 // tests/server/r2-multipart.test.ts
 import { describe, expect, it } from "vitest";
+import { sameBytes } from "../support/bytes";
 import { makeR2 } from "../support/r2";
 
 const MiB = 1024 * 1024;
@@ -34,11 +35,34 @@ describe("promote", () => {
     fake.putObject("priv-bucket", "pending/a/big", { body, contentType: "video/mp4", meta });
     await r2.promote({ pendingKey: "pending/a/big", finalKey: "a/big", visibility: "private", contentType: "video/mp4", size: body.byteLength, metadata: meta });
     const copied = fake.object("priv-bucket", "a/big")!;
-    expect(copied.body).toEqual(body);
+    expect(copied.body.byteLength).toBe(body.byteLength);
+    expect(sameBytes(copied.body, body)).toBe(true);
     expect(copied.meta).toEqual(meta);
     expect(copied.contentType).toBe("video/mp4");
     expect(fake.uploads.size).toBe(0);
-  }, 120_000); // deep toEqual over a 6 MiB typed array takes ~50s in vitest; the copy itself takes ~0.1s
+  });
+
+  it("public multipart copy carries only Content-Type (no owner/input/metadata)", async () => {
+    const { r2, fake } = makeR2({ config: { copyObjectMax: 5 * MiB }, fake: { maxCopySize: 5 * MiB } });
+    const body = new Uint8Array(6 * MiB).map((_, i) => (i * 7) % 253);
+    fake.putObject("priv-bucket", "pending/a/pub-big", { body, contentType: "video/mp4", meta });
+    await r2.promote({ pendingKey: "pending/a/pub-big", finalKey: "a/pub-big", visibility: "public", contentType: "video/mp4", size: body.byteLength, metadata: meta });
+    const copied = fake.object("pub-bucket", "a/pub-big")!;
+    expect(copied.meta).toEqual({});
+    expect(copied.contentType).toBe("video/mp4");
+    expect(copied.body.byteLength).toBe(body.byteLength);
+    expect(sameBytes(copied.body, body)).toBe(true);
+    expect(fake.uploads.size).toBe(0);
+  });
+});
+
+describe("sameBytes helper", () => {
+  it("compares length and every byte", () => {
+    const a = new Uint8Array([1, 2, 3]);
+    expect(sameBytes(a, new Uint8Array([1, 2, 3]))).toBe(true);
+    expect(sameBytes(a, new Uint8Array([1, 2]))).toBe(false);
+    expect(sameBytes(a, new Uint8Array([1, 9, 3]))).toBe(false);
+  });
 });
 
 describe("multipart", () => {
