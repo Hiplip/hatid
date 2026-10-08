@@ -4,14 +4,17 @@ import { demoUserId } from "./session";
 import { upsertFile } from "./store";
 
 function build() {
+  const publicBucket = process.env.R2_PUBLIC_BUCKET;
+  const publicBaseUrl = process.env.R2_PUBLIC_BASE_URL;
+  const withPublic = Boolean(publicBucket && publicBaseUrl);
   const r2 = createR2Client({
     accountId: env("R2_ACCOUNT_ID"),
     accessKeyId: env("R2_ACCESS_KEY_ID"),
     secretAccessKey: env("R2_SECRET_ACCESS_KEY"),
-    buckets: process.env.R2_PUBLIC_BUCKET
-      ? { private: env("R2_PRIVATE_BUCKET"), public: process.env.R2_PUBLIC_BUCKET }
+    buckets: withPublic
+      ? { private: env("R2_PRIVATE_BUCKET"), public: publicBucket as string }
       : { private: env("R2_PRIVATE_BUCKET") },
-    ...(process.env.R2_PUBLIC_BASE_URL ? { publicBaseUrl: process.env.R2_PUBLIC_BASE_URL } : {}),
+    ...(withPublic ? { publicBaseUrl: publicBaseUrl as string } : {}),
   });
   const uploads = defineUploads(r2, {
     document: {
