@@ -2,18 +2,111 @@
   "name": "@hiplip/hatid",
   "version": "0.0.0",
   "description": "Direct-to-R2 file uploads for React and the edge. Your bucket, your rules.",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "packageManager": "pnpm@10.34.6",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hiplip/hatid.git"
   },
-  "keywords": [],
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/Hiplip/hatid/issues"
   },
-  "homepage": "https://github.com/Hiplip/hatid#readme"
+  "homepage": "https://github.com/Hiplip/hatid#readme",
+  "keywords": [
+    "cloudflare",
+    "r2",
+    "upload",
+    "presigned-url",
+    "s3",
+    "react",
+    "nextjs",
+    "trpc",
+    "workers"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./next": {
+      "types": "./dist/next/index.d.ts",
+      "import": "./dist/next/index.js"
+    },
+    "./trpc": {
+      "types": "./dist/trpc/index.d.ts",
+      "import": "./dist/trpc/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint:pkg": "publint && attw --pack . --profile esm-only",
+    "changeset": "changeset",
+    "release": "node scripts/publish.mjs"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
+    "aws4fetch": "^1.0.20"
+  },
+  "peerDependencies": {
+    "@trpc/client": ">=11",
+    "@trpc/server": ">=11",
+    "next": ">=14",
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "next": {
+      "optional": true
+    },
+    "@trpc/server": {
+      "optional": true
+    },
+    "@trpc/client": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@changesets/cli": "^3.0.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@trpc/client": "^11.19.0",
+    "@trpc/server": "^11.19.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitest/coverage-v8": "^5.0.3",
+    "happy-dom": "^20.14.5",
+    "publint": "^0.3.25",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3",
+    "zod": "^4.6.5"
+  }
 }
