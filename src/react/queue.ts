@@ -32,7 +32,7 @@ type Internal = UploadItem & {
   key: string | undefined; uploaded: boolean;
   multipart: { key: string; uploadId: string; token: string; parts: CompletedPart[] | undefined } | undefined;
 };
-type Batch = { itemIds: string[]; resolve: (r: BatchResult[]) => void; settledOnce: boolean };
+type Batch = { items: Internal[]; resolve: (r: BatchResult[]) => void; settledOnce: boolean };
 
 const SETTLED = new Set(["success", "error", "canceled"]);
 let counter = 0;
@@ -85,11 +85,13 @@ export class UploadQueue {
       };
     });
     this.items.push(...created);
-    const done = new Promise<BatchResult[]>((resolve) => this.batches.set(batchId, { itemIds: created.map((c) => c.id), resolve, settledOnce: false }));
+    const done = new Promise<BatchResult[]>((resolve) => this.batches.set(batchId, { items: created, resolve, settledOnce: false }));
     for (const item of created) if (item.status === "error") this.opts.onError?.(this.view(item));
     this.emit();
+    const hadQueued = created.some((c) => c.status === "queued");
     this.pump();
-    this.settle(batchId);
+    // Items settled synchronously inside pump() already settled the batch from run()'s finally.
+    if (!hadQueued) this.settle(batchId);
     return done;
   }
 
@@ -125,7 +127,7 @@ export class UploadQueue {
   reset(): void {
     this.items = this.items.filter((i) => !SETTLED.has(i.status));
     for (const [id, batch] of this.batches) {
-      if (!batch.itemIds.some((itemId) => this.items.some((i) => i.id === itemId))) this.batches.delete(id);
+      if (!batch.items.some((i) => this.items.includes(i))) this.batches.delete(id);
     }
     this.emit();
   }
@@ -180,12 +182,12 @@ export class UploadQueue {
         }
       }
       this.patch(item, { status: "success", result: file, progress: 1, loaded: item.size });
-      this.opts.onComplete?.({ id: item.id, file, fileName: item.fileName });
+      try { this.opts.onComplete?.({ id: item.id, file, fileName: item.fileName }); } catch { /* app callback bugs must never change item state */ }
     } catch (e) {
       if (signal.aborted || (e instanceof HatidError && e.code === "CANCELED")) {
         this.patch(item, { status: "canceled", error: new HatidError("CANCELED", "Upload canceled") });
       } else {
-        const error = e instanceof HatidError ? e : new HatidError("NETWORK", e instanceof Error ? e.message : String(e), { cause: e });
+        const error = e instanceof HatidError ? e : new HatidError("INTERNAL", e instanceof Error ? e.message : String(e), { cause: e });
         this.patch(item, { status: "error", error });
         this.opts.onError?.(this.view(item));
       }
@@ -211,7 +213,7 @@ export class UploadQueue {
   private settle(batchId: string): void {
     const batch = this.batches.get(batchId);
     if (!batch) return;
-    const items = batch.itemIds.map((id) => this.items.find((i) => i.id === id)).filter((i): i is Internal => i !== undefined);
+    const items = batch.items;
     if (items.length === 0 || items.some((i) => !SETTLED.has(i.status))) return;
     const results: BatchResult[] = items.map((i) => ({
       id: i.id, status: i.status as BatchResult["status"], fileName: i.fileName,
@@ -238,7 +240,7 @@ export class UploadQueue {
   }
 
   private emit(): void {
-    const counted = this.items.filter((i) => i.status !== "canceled" && !(i.status === "error" && !i.uploaded && i.loaded === 0));
+    const counted = this.items.filter((i) => i.status !== "canceled" && !(i.status === "error" && !i.uploaded));
     const total = counted.reduce((a, i) => a + i.size, 0);
     const loaded = counted.reduce((a, i) => a + (i.status === "success" ? i.size : i.loaded), 0);
     const busy = this.items.some((i) => i.status === "queued" || i.status === "issuing" || i.status === "uploading" || i.status === "confirming");

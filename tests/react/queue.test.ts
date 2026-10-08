@@ -119,4 +119,46 @@ describe("UploadQueue", () => {
     q.reset();
     expect(q.getSnapshot()).toMatchObject({ items: [], status: "idle", progress: 0 });
   });
+
+  it("keeps callback bugs from changing item state", async () => {
+    const onError = vi.fn();
+    const q = new UploadQueue({ transport: transport(), route: "doc", onComplete: () => { throw new Error("app bug"); }, onError, createXhr: createFakeXhr });
+    const results = await q.upload(file("a"));
+    expect(results[0]!.status).toBe("success");
+    expect(q.getSnapshot().items[0]!.status).toBe("success");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("maps non-Hatid throws to non-retryable INTERNAL", async () => {
+    const t = transport({ issue: vi.fn(async () => { throw new TypeError("oops"); }) });
+    const [r] = await new UploadQueue({ transport: t, route: "doc", createXhr: createFakeXhr }).upload(file("a"));
+    expect(r!.error).toMatchObject({ code: "INTERNAL", retryable: false });
+  });
+
+  it("returns complete batch results even if reset() runs mid-batch", async () => {
+    let release: (() => void) | undefined;
+    FakeXhr.script = (x) => { if (FakeXhr.all.length === 2) release = () => x.respond(200, { etag: '"e"' }); else queueMicrotask(() => x.respond(200, { etag: '"e"' })); };
+    const q = new UploadQueue({ transport: transport(), route: "doc", createXhr: createFakeXhr });
+    const done = q.upload([file("a"), file("b")]);
+    await vi.waitFor(() => expect(q.getSnapshot().items[0]!.status).toBe("success"));
+    await vi.waitFor(() => expect(release).toBeDefined());
+    q.reset();
+    release!();
+    expect(await done).toHaveLength(2);
+  });
+
+  it("reaches progress 1 when a mid-PUT failure sits beside a success", async () => {
+    FakeXhr.script = (x) => { const first = FakeXhr.all.length === 1; queueMicrotask(() => { if (first) { x.progress(5, 10); x.fail(); } else x.respond(200, { etag: '"e"' }); }); };
+    const q = new UploadQueue({ transport: transport(), route: "doc", createXhr: createFakeXhr });
+    const results = await q.upload([file("a", 10), file("b", 10)]);
+    expect(results.map((r) => r.status)).toEqual(["error", "success"]);
+    expect(q.getSnapshot().progress).toBe(1);
+  });
+
+  it("fires onAllComplete once when an item settles synchronously", async () => {
+    const t = transport({ issue: vi.fn(() => { throw new HatidError("INVALID_TYPE", "no"); }) });
+    const onAllComplete = vi.fn();
+    await new UploadQueue({ transport: t, route: "doc", onAllComplete, createXhr: createFakeXhr }).upload(file("a"));
+    expect(onAllComplete).toHaveBeenCalledTimes(1);
+  });
 });
