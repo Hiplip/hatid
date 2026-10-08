@@ -81,10 +81,18 @@ export async function runConfirm(backend: StorageBackend, req: { key: unknown; f
     } catch (cause) {
       // Never destroy a committed result: if a concurrent run already wrote its receipt, keep the final copy.
       // Residual window: a run may still write its receipt right after this re-check (onConfirmed is at-least-once).
-      const now = await backend.inspect({ key }).catch(() => null);
-      if (now?.state === "confirmed") return { file, input: meta.input, metadata: meta.metadata, alreadyConfirmed: true };
+      const hookFailed = new HatidError("HOOK_FAILED", `onConfirmed failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+      let now: Awaited<ReturnType<StorageBackend["inspect"]>>;
+      try {
+        now = await backend.inspect({ key });
+      } catch {
+        // State unknown: skip compensation. An orphaned final copy is only a leak (a retry re-promotes onto
+        // the same key); deleting it could destroy a copy a concurrent run has committed.
+        throw hookFailed;
+      }
+      if (now.state === "confirmed") return { file, input: meta.input, metadata: meta.metadata, alreadyConfirmed: true };
       await backend.deleteObject({ key: finalKey, bucket: meta.visibility }).catch(() => {});
-      throw new HatidError("HOOK_FAILED", `onConfirmed failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+      throw hookFailed;
     }
   }
 

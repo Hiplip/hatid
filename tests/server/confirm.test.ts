@@ -117,6 +117,25 @@ describe("confirmUpload", () => {
     expect(ok.file.key).toBe(finalKey);
   });
 
+  it("keeps the final copy when the hook fails and the re-check itself fails", async () => {
+    const t = setup();
+    const issued = await t.issueAndPut();
+    const finalKey = issued.key.slice("pending/".length);
+    let inspects = 0;
+    const flaky = { ...t.r2, inspect: async (a: { key: string }) => {
+      if (++inspects === 2) throw new Error("R2 unreachable");
+      return t.r2.inspect(a);
+    } } as typeof t.r2;
+    await expect(confirmUpload(flaky, { key: issued.key, owner: "alice", onConfirmed: () => { throw new Error("db down"); } }))
+      .rejects.toMatchObject({ code: "HOOK_FAILED", retryable: true });
+    expect(inspects).toBe(2);
+    // unknown state: an orphaned final copy is only a leak, deleting it could destroy a concurrently committed one
+    expect(t.fake.object("priv-bucket", finalKey)).toBeDefined();
+    expect(t.fake.object("priv-bucket", issued.key)).toBeDefined();
+    const ok = await confirmUpload(t.r2, { key: issued.key, owner: "alice" });
+    expect(ok.file.key).toBe(finalKey);
+  });
+
   it("survives two confirms racing for the same key", async () => {
     const t = setup();
     const issued = await t.issueAndPut();
