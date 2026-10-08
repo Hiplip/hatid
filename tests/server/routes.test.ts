@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineUploads, routeAbort, routeComplete, routeConfirm, routeIssue, routeSignParts } from "../../src/server/routes";
+import { decodeSignedMeta } from "../../src/core/metadata";
 import { makeR2 } from "../support/r2";
 
 const MiB = 1024 * 1024;
@@ -72,6 +73,20 @@ describe("route issue", () => {
     expect(rateLimit).toHaveBeenCalledWith({ ctx, owner: "alice", action: "issue" });
   });
 
+  it("ignores a client-supplied key and owner: keys are server-generated, owner comes from auth (rules 1, 4)", async () => {
+    const t = make();
+    const forged = "pending/att/2026/01/00000000-0000-4000-8000-000000000000";
+    const issued = await routeIssue(t.uploads, "attachment", ctx, {
+      input: { noteId: "n1" }, size: 3, contentType: "text/plain", key: forged, owner: "mallory",
+    });
+    if (issued.kind !== "single") throw new Error("expected single");
+    expect(issued.key).not.toBe(forged);
+    expect(issued.key).toMatch(/^pending\/att\/\d{4}\/\d{2}\/[0-9a-f-]{36}$/);
+    await t.browserPut(issued.url, issued.headers, "abc");
+    expect(t.fake.object("priv-bucket", forged)).toBeUndefined();
+    expect(decodeSignedMeta(t.fake.object("priv-bucket", issued.key)!.meta)?.meta.owner).toBe("alice");
+  });
+
   it("rejects unknown routes", async () => {
     await expect(routeIssue(make().uploads, "nope", ctx, {})).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
@@ -134,6 +149,31 @@ describe("route multipart", () => {
     const { file } = await routeComplete(t.uploads, "attachment", ctx, { ...ids, parts: etags, fileName: "big.txt" });
     expect(file.size).toBe(6 * MiB);
     expect(t.onConfirmed).toHaveBeenCalledWith(expect.objectContaining({ fileName: "big.txt", input: { noteId: "n1" } }));
+  });
+
+  it("rejects a non-owner's abort and complete with a valid token, leaving the upload untouched (rule 8)", async () => {
+    const t = make();
+    const issued = await routeIssue(t.uploads, "attachment", ctx, { input: { noteId: "n1" }, size: 6 * MiB, contentType: "text/plain" });
+    if (issued.kind !== "multipart") throw new Error("expected multipart");
+    const ids = { key: issued.key, uploadId: issued.uploadId, token: issued.token };
+    const { parts } = await routeSignParts(t.uploads, "attachment", ctx, { ...ids, partNumbers: [1, 2] });
+    const sizes = [5 * MiB, MiB];
+    const etags = [];
+    for (const [i, p] of parts.entries()) {
+      const res = await t.fake.fetch(p.url, { method: "PUT", body: new Uint8Array(sizes[i]!) });
+      etags.push({ partNumber: p.partNumber, etag: res.headers.get("etag")! });
+    }
+    t.auth.mockReturnValueOnce("bob");
+    await expect(routeAbort(t.uploads, "attachment", ctx, ids)).rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
+    expect(t.fake.uploads.size).toBe(1);
+    t.auth.mockReturnValueOnce("bob");
+    await expect(routeComplete(t.uploads, "attachment", ctx, { ...ids, parts: etags })).rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
+    expect(t.fake.uploads.size).toBe(1);
+    expect(t.fake.object("priv-bucket", issued.key)).toBeUndefined();
+    expect(t.onConfirmed).not.toHaveBeenCalled();
+    // the owner can still finish it
+    const { file } = await routeComplete(t.uploads, "attachment", ctx, { ...ids, parts: etags });
+    expect(file.size).toBe(6 * MiB);
   });
 
   it("aborts", async () => {

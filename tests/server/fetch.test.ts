@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createNextHandler } from "../../src/next";
 import { createFetchHandler } from "../../src/server/fetch";
 import { defineUploads } from "../../src/server/routes";
+import { decodeSignedMeta } from "../../src/core/metadata";
+import { handleUploadAction } from "../../src/server/protocol";
 import { makeR2 } from "../support/r2";
 
 const user = (req: Request) => /uid=(\w+)/.exec(req.headers.get("cookie") ?? "")?.[1] ?? null;
@@ -30,6 +32,39 @@ describe("createFetchHandler", () => {
     const confirmRes = await t.post({ action: "confirm", route: "doc", key: issued.key, fileName: "a.txt" });
     expect(confirmRes.status).toBe(200);
     expect((await confirmRes.json()).file.key).toBe(issued.key.slice("pending/".length));
+  });
+
+  it("ignores a client-supplied owner and key at issue and confirm (rules 1, 4)", async () => {
+    const onConfirmed = vi.fn();
+    const t = make({ onConfirmed });
+    const forged = "pending/docs/2026/01/00000000-0000-4000-8000-000000000000";
+    const issued = await (await t.post({ action: "issue", route: "doc", size: 3, contentType: "text/plain", owner: "mallory", key: forged })).json();
+    expect(issued.key).not.toBe(forged);
+    expect(issued.key).toMatch(/^pending\/docs\//);
+    await t.browserPut(issued.url, issued.headers, "abc");
+    expect(decodeSignedMeta(t.fake.object("priv-bucket", issued.key)!.meta)?.meta.owner).toBe("alice");
+    // mallory claiming alice's owner id in the body is still mallory
+    const asMallory = await t.post({ action: "confirm", route: "doc", key: issued.key, owner: "alice" }, {
+      headers: { "content-type": "application/json", cookie: "uid=mallory" },
+    });
+    expect([asMallory.status, (await asMallory.json()).error.code]).toEqual([404, "CONFIRM_REJECTED"]);
+    expect(t.fake.object("priv-bucket", issued.key)).toBeDefined();
+    const ok = await t.post({ action: "confirm", route: "doc", key: issued.key, owner: "mallory" });
+    expect(ok.status).toBe(200);
+    expect(onConfirmed).toHaveBeenCalledWith(expect.objectContaining({ owner: "alice" }));
+  });
+
+  it("handleUploadAction ignores a client-supplied owner (rule 4)", async () => {
+    const t = make();
+    const req = (uid: string) => ({ req: new Request("https://app.test", { headers: { cookie: `uid=${uid}` } }) });
+    const issued = await handleUploadAction(t.uploads, req("alice"), { action: "issue", route: "doc", size: 3, contentType: "text/plain", owner: "mallory" }) as
+      { key: string; url: string; headers: Record<string, string> };
+    await t.browserPut(issued.url, issued.headers, "abc");
+    expect(decodeSignedMeta(t.fake.object("priv-bucket", issued.key)!.meta)?.meta.owner).toBe("alice");
+    await expect(handleUploadAction(t.uploads, req("mallory"), { action: "confirm", route: "doc", key: issued.key, owner: "alice" }))
+      .rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
+    await expect(handleUploadAction(t.uploads, req("alice"), { action: "confirm", route: "doc", key: issued.key, owner: "mallory" }))
+      .resolves.toMatchObject({ file: { key: issued.key.slice("pending/".length) } });
   });
 
   it("guards method, content type, size and JSON", async () => {
