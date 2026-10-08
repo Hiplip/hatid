@@ -94,10 +94,11 @@ describe("uploadMultipart", () => {
     const t = transport();
     const onPartsDone = vi.fn();
     const ac = new AbortController();
-    FakeXhr.script = (x) => queueMicrotask(() => { ac.abort(); x.respond(200, { etag: '"e"' }); });
+    FakeXhr.script = (x) => queueMicrotask(() => { x.respond(200, { etag: '"e"' }); ac.abort(); });
     await expect(run(t, { signal: ac.signal, partConcurrency: 1, onPartsDone })).rejects.toMatchObject({ code: "CANCELED" });
     expect(t.complete).not.toHaveBeenCalled();
     expect(onPartsDone).not.toHaveBeenCalled();
+    expect(FakeXhr.all).toHaveLength(1);
   });
 
   it("does not loop forever when the server omits a requested part", async () => {
