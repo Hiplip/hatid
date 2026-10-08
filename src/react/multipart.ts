@@ -39,7 +39,9 @@ export async function uploadMultipart(o: MultipartUploadOptions): Promise<{ file
 
   const ensureSigned = async (n: number) => {
     while (!signed.has(n)) {
+      let started = false;
       if (!signing) {
+        started = true;
         const numbers: number[] = [];
         for (let k = n; k <= issued.partCount && numbers.length < batchSize; k++) if (!signed.has(k) && !etags.has(k)) numbers.push(k);
         signing = transport.signParts({ route, key: issued.key, uploadId: issued.uploadId, token: issued.token, partNumbers: numbers }, inner.signal)
@@ -47,6 +49,7 @@ export async function uploadMultipart(o: MultipartUploadOptions): Promise<{ file
           .finally(() => { signing = null; });
       }
       await signing;
+      if (started && !signed.has(n)) throw new HatidError("STORAGE", "Server did not sign part " + n);
     }
   };
 
@@ -85,6 +88,8 @@ export async function uploadMultipart(o: MultipartUploadOptions): Promise<{ file
       while (next <= issued.partCount && !inner.signal.aborted) await uploadPart(next++);
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, issued.partCount) }, worker));
+    if (o.signal.aborted || inner.signal.aborted) throw new HatidError("CANCELED", "Upload canceled");
+    if (etags.size !== issued.partCount) throw new HatidError("INTERNAL", "Multipart upload finished with missing parts");
   } catch (error) {
     inner.abort();
     throw o.signal.aborted ? new HatidError("CANCELED", "Upload canceled") : error;

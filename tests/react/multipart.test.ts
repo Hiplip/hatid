@@ -78,4 +78,33 @@ describe("uploadMultipart", () => {
     ac.abort();
     await expect(p).rejects.toMatchObject({ code: "CANCELED" });
   });
+
+  it("rejects without completing when the signal is already aborted", async () => {
+    const t = transport();
+    const onPartsDone = vi.fn();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(run(t, { signal: ac.signal, onPartsDone })).rejects.toMatchObject({ code: "CANCELED" });
+    expect(t.complete).not.toHaveBeenCalled();
+    expect(onPartsDone).not.toHaveBeenCalled();
+    expect(FakeXhr.all).toHaveLength(0);
+  });
+
+  it("never completes when aborted between parts", async () => {
+    const t = transport();
+    const onPartsDone = vi.fn();
+    const ac = new AbortController();
+    FakeXhr.script = (x) => queueMicrotask(() => { ac.abort(); x.respond(200, { etag: '"e"' }); });
+    await expect(run(t, { signal: ac.signal, partConcurrency: 1, onPartsDone })).rejects.toMatchObject({ code: "CANCELED" });
+    expect(t.complete).not.toHaveBeenCalled();
+    expect(onPartsDone).not.toHaveBeenCalled();
+  });
+
+  it("does not loop forever when the server omits a requested part", async () => {
+    const t = transport();
+    t.signParts.mockImplementation(async () => ({ parts: [] }));
+    await expect(run(t, { retries: 2 })).rejects.toMatchObject({ code: "STORAGE" });
+    expect(t.signParts.mock.calls.length).toBeLessThan(20);
+    expect(t.complete).not.toHaveBeenCalled();
+  });
 });
