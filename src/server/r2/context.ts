@@ -80,7 +80,8 @@ export function createContext(c: R2ClientConfig): R2Context {
     copyObjectMax: c.copyObjectMax ?? COPY_OBJECT_MAX,
     aws: new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" }),
     // wrap so Workers never sees an unbound `fetch` ("Illegal invocation")
-    doFetch: custom ?? ((input, init) => globalThis.fetch(input, init)),
+    // plain call, so `this` is undefined: a method call (ctx.doFetch) would bind `this` to ctx and Workers throws "Illegal invocation"
+    doFetch: (input, init) => (custom ?? globalThis.fetch)(input, init),
   };
 }
 

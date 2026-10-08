@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { encodeSignedMeta } from "../../src/core/metadata";
 import { createR2Client } from "../../src/server/r2";
+import { FakeR2 } from "../support/fake-r2";
 import { makeR2 } from "../support/r2";
 
 const signed = encodeSignedMeta({ route: "", owner: "u1", visibility: "private", size: 3, maxSize: 10, type: "text/plain", issuedAt: 1, input: undefined, metadata: undefined });
@@ -95,5 +96,18 @@ describe("tokens", () => {
     const custom = makeR2({ config: { tokenSecret: "t" } }).r2;
     expect(await custom.verifyToken({ token })).toBeNull();
     expect(await custom.verifyToken({ token: await custom.signToken({ payload: { b: 2 } }) })).toEqual({ b: 2 });
+  });
+});
+
+describe("custom fetch", () => {
+  it("calls a custom fetch unbound (Workers rejects a non-global this)", async () => {
+    const fake = new FakeR2();
+    const strictFetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+      return fake.fetch(input, init);
+    };
+    const r2 = createR2Client({ ...fake.creds(), buckets: { private: "priv-bucket" }, fetch: strictFetch });
+    fake.putObject("priv-bucket", "p/1", { body: new Uint8Array(1) });
+    expect(await r2.head({ key: "p/1", bucket: "private" })).toMatchObject({ size: 1 });
   });
 });
