@@ -1,3 +1,4 @@
+import { AwsClient } from "aws4fetch";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { StorageBackend } from "../../src/server/backend";
 import { cleanupUnconfirmed } from "../../src/server/low-level/cleanup";
@@ -15,7 +16,19 @@ export type ContractEnv = {
   prefix: string;
   /** True against real R2 (informational; lets future cases skip fake-only checks). */
   live: boolean;
+  /** Set when `backend` has a public bucket: enables the public-upload case. */
+  public?: { rawHead: (key: string) => Promise<Response> } | undefined;
 };
+
+/** A raw header-signed HEAD against one bucket (bypasses hatid, to see every stored header). */
+export function signedHead(o: {
+  accountId: string; accessKeyId: string; secretAccessKey: string; bucket: string; fetch?: typeof fetch;
+}): (key: string) => Promise<Response> {
+  const aws = new AwsClient({ accessKeyId: o.accessKeyId, secretAccessKey: o.secretAccessKey, service: "s3", region: "auto" });
+  const doFetch = o.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  return async (key) => doFetch(await aws.sign(
+    `https://${o.accountId}.r2.cloudflarestorage.com/${o.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`, { method: "HEAD" }));
+}
 
 const MiB = 1024 * 1024;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -93,6 +106,27 @@ export function runBackendContract(name: string, setup: () => ContractEnv | Prom
       const finalKey = issued.key.slice("pending/".length);
       expect(await headFile(env.backend, { key: finalKey, visibility: "private" })).toBeNull();
       await expect(confirmUpload(env.backend, { key: issued.key, owner: "alice" })).resolves.toBeDefined();
+    });
+
+    it("public upload: confirm copies to the public bucket with no hatid metadata", async (ctx) => {
+      if (!env.public) ctx.skip();
+      const pub = env.public!;
+      const { issued, res } = await put({ visibility: "public" });
+      expect(res.status).toBe(200);
+      const { file } = await confirmUpload(env.backend, { key: issued.key, owner: "alice" });
+      expect(file.visibility).toBe("public");
+      expect(file.url).toBe(`${env.backend.capabilities.publicBaseUrl}/${file.key}`);
+      expect(await headFile(env.backend, { key: file.key, visibility: "public" })).toMatchObject({ size: 5, contentType: "text/plain" });
+      expect(await headFile(env.backend, { key: file.key, visibility: "private" })).toBeNull();
+      const raw = await pub.rawHead(file.key);
+      expect(raw.status).toBe(200);
+      expect(raw.headers.get("content-type")).toBe("text/plain");
+      const metaHeaders: string[] = [];
+      raw.headers.forEach((_v, k) => { if (k.toLowerCase().startsWith("x-amz-meta-")) metaHeaders.push(k); });
+      expect(metaHeaders).toEqual([]);
+      await deleteFile(env.backend, { key: file.key, visibility: "public" });
+      expect(await headFile(env.backend, { key: file.key, visibility: "public" })).toBeNull();
+      await env.backend.deleteObject({ key: `receipts/${file.key}`, bucket: "private" });
     });
 
     it("multipart: sign parts, upload, complete", async () => {
