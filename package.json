@@ -1,0 +1,19 @@
+{
+  "name": "@hiplip/hatid",
+  "version": "0.0.0",
+  "description": "Direct-to-R2 file uploads for React and the edge. Your bucket, your rules.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hiplip/hatid.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Hiplip/hatid/issues"
+  },
+  "homepage": "https://github.com/Hiplip/hatid#readme"
+}
