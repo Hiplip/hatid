@@ -1,5 +1,6 @@
 import { HatidError } from "../../core/errors";
 import type { CompletedPart, SignedPart } from "../../core/types";
+import { validatePrefix } from "../../core/keys";
 import { parseDuration } from "../../core/units";
 import type { StorageBackend } from "../backend";
 import { rejected, runConfirm, type ConfirmResult, type OnConfirmed } from "./confirm";
@@ -45,6 +46,7 @@ export async function completeUpload(backend: StorageBackend, o: {
   allowedTypes?: readonly string[] | undefined; onConfirmed?: OnConfirmed | undefined;
 }): Promise<ConfirmResult> {
   const route = o.route ?? "";
+  if (o.prefix !== undefined) validatePrefix(o.prefix); // before completing anything
   const t = await readMultipartToken(backend, o.token, o.key, o.uploadId, route);
   if (t.owner !== o.owner) throw rejected();
   const count = partCountOf(t);

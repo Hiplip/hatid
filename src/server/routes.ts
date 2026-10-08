@@ -83,7 +83,9 @@ function define<TCtx, TSchemas>(
     const multipart = resolveMultipart(def.multipart);
     if (!multipart && maxSize > SINGLE_PUT_MAX) throw new HatidError("CONFIG", `${where}: maxSize above 5 GiB requires multipart`);
     let prefix: string;
-    try { prefix = validatePrefix(def.prefix); } catch { throw new HatidError("CONFIG", `${where}: invalid prefix "${String(def.prefix)}"`); }
+    try { prefix = validatePrefix(def.prefix); } catch (e) {
+      throw new HatidError("CONFIG", `${where}: ${e instanceof Error ? e.message : `invalid prefix "${String(def.prefix)}"`}`);
+    }
     resolved[name] = {
       name, visibility: def.visibility, prefix, maxSize, allowedTypes: validateAllowedTypes(def.allowedTypes), schema,
       datePrefix: def.datePrefix ?? true, keyExtension: def.keyExtension ?? false, keyFileName: def.keyFileName ?? false,

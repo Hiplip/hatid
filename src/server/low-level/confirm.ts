@@ -1,6 +1,6 @@
 import { HatidError } from "../../core/errors";
 import { cleanDisplayName } from "../../core/filename";
-import { finalKeyOf, isPendingKey } from "../../core/keys";
+import { finalKeyOf, isPendingKey, validatePrefix } from "../../core/keys";
 import { decodeSignedMeta, type SignedMeta } from "../../core/metadata";
 import { isAllowedType, normalizeContentType } from "../../core/mime";
 import type { UploadedFile } from "../../core/types";
@@ -36,6 +36,8 @@ function fileOf(backend: StorageBackend, key: string, meta: SignedMeta): Uploade
 }
 
 export async function runConfirm(backend: StorageBackend, req: { key: unknown; fileName?: unknown }, hooks: ConfirmHooks): Promise<ConfirmResult> {
+  // A bad prefix is a CONFIG error, never a RegExp SyntaxError or a widened match in isPendingKey.
+  if (hooks.prefix !== undefined) validatePrefix(hooks.prefix);
   if (!isPendingKey(req.key, hooks.prefix)) throw new HatidError("INVALID_INPUT", "Invalid upload key");
   const key = req.key;
 

@@ -38,6 +38,8 @@ describe("defineUploads validation", () => {
     [{ x: { ...ok, input: { notASchema: true } } }, "Standard Schema"],
     [{ x: { ...ok, maxSize: "6GB", multipart: false } }, "multipart"],
     [{ x: { ...ok, prefix: "Bad" } }, "prefix"],
+    [{ x: { ...ok, prefix: "receipts" } }, "reserved"],
+    [{ x: { ...ok, prefix: "pending/x" } }, "reserved"],
   ])("rejects %j", (routes, message) => {
     expect(() => defineUploads(r2, routes as never)).toThrowError(expect.objectContaining({ code: "CONFIG", message: expect.stringContaining(message) }));
   });

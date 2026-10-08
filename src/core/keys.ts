@@ -13,6 +13,11 @@ export function validatePrefix(prefix: string): string {
   if (typeof prefix !== "string" || prefix.length > 128 || !PREFIX_RE.test(prefix)) {
     throw new HatidError("CONFIG", `Invalid prefix "${String(prefix)}": use lowercase segments [a-z0-9_-] separated by "/"`);
   }
+  const first = prefix.split("/")[0];
+  if (first === "pending" || first === "receipts") {
+    // Final keys are `<prefix>/…`: these would land in hatid's own pending/ and receipts/ folders and be swept.
+    throw new HatidError("CONFIG", `Invalid prefix "${prefix}": "pending" and "receipts" are reserved first segments`);
+  }
   return prefix;
 }
 

@@ -12,6 +12,13 @@ describe("keys", () => {
     }
   });
 
+  it("reserves pending and receipts as a first prefix segment", () => {
+    for (const bad of ["pending", "receipts", "pending/x", "receipts/2026"]) {
+      expect(() => validatePrefix(bad)).toThrowError(expect.objectContaining({ code: "CONFIG", message: expect.stringContaining("reserved") }));
+    }
+    for (const ok of ["pendings", "receipts-x", "my/receipts", "a/pending"]) expect(validatePrefix(ok)).toBe(ok);
+  });
+
   it("generates date-prefixed keys by default", () => {
     const key = generatePendingKey({ prefix: "att", datePrefix: true, now: new Date(Date.UTC(2026, 0, 5)) });
     expect(key).toMatch(new RegExp(`^pending/att/2026/01/${UUID.source}$`));

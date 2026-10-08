@@ -1,6 +1,7 @@
 // tests/server/confirm.test.ts
 import { describe, expect, it, vi } from "vitest";
 import { confirmUpload, runConfirm } from "../../src/server/low-level/confirm";
+import { completeUpload } from "../../src/server/low-level/multipart";
 import { setup } from "../support/flow";
 
 describe("confirmUpload", () => {
@@ -63,6 +64,15 @@ describe("confirmUpload", () => {
     await expect(confirmUpload(t.r2, { key: "att/../../etc", owner: "alice" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
     const issued = await t.issueAndPut({ route: "avatar" });
     await expect(confirmUpload(t.r2, { key: issued.key, owner: "alice", route: "attachment" })).rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
+  });
+
+  it.each(["a.b(", "a|.*", "receipts", "pending/att", "Bad"])("rejects an invalid low-level prefix %j as CONFIG", async (prefix) => {
+    const t = setup();
+    const issued = await t.issueAndPut();
+    await expect(confirmUpload(t.r2, { key: issued.key, owner: "alice", prefix })).rejects.toMatchObject({ code: "CONFIG" });
+    await expect(completeUpload(t.r2, { key: issued.key, uploadId: "u", token: "t", owner: "alice", parts: [], prefix }))
+      .rejects.toMatchObject({ code: "CONFIG" });
+    expect(t.fake.object("priv-bucket", issued.key)).toBeDefined();
   });
 
   it.each([
