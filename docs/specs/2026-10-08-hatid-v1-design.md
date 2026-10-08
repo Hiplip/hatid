@@ -462,3 +462,8 @@ Deviations from this spec and decisions made during implementation:
 - Queue: app callbacks can't change item state; non-HatidError throws map to `INTERNAL` (non-retryable).
 - `/react` build keeps `"use client"` via `treeshake: false` on the react tsup config.
 - Tooling: pnpm pinned to 10.34.6, TypeScript ^5.9 (TS 7 breaks tsup dts); examples/next uses Next 16 (`proxy.ts`) and wires the public bucket only when both R2_PUBLIC_BUCKET and R2_PUBLIC_BASE_URL are set.
+- Reserved prefixes: a route (or low-level) `prefix` whose first segment is `pending` or `receipts` is a `CONFIG` error, since its final keys would land in hatid's own folders and be swept; low-level `confirmUpload`/`completeUpload` validate a passed `prefix` (CONFIG, never a RegExp error).
+- `isHatidError` (and `instanceof HatidError`) check a `Symbol.for("@hiplip/hatid/error")` brand, because the built `/react` and `/trpc` entries each inline a copy of the class; `src/` never uses `instanceof HatidError`, and `pnpm smoke:dist` (CI and release) checks the built entries together.
+- Queue: `retry()` also accepts cancelled items (re-issued, or re-confirmed if the bytes already reached R2).
+- `onConfirmed` compensation: if the re-check `inspect` itself fails, the final copy is kept (only a leak) and `HOOK_FAILED` is still thrown.
+- `trpcTransport` maps thrown tRPC client errors by `data.httpStatus`: 401 → `UNAUTHORIZED`, 429 → `RATE_LIMITED`, other 4xx (except 408/499) → non-retryable `INVALID_INPUT`, everything else → retryable `NETWORK`.

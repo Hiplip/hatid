@@ -15,7 +15,7 @@ It also proves that `@hiplip/hatid/server` bundles for Workers with no Node buil
    pnpm --filter hatid-cleanup-worker exec wrangler secret put R2_SECRET_ACCESS_KEY
    ```
 
-3. Set `R2_PRIVATE_BUCKET` in `wrangler.toml` `[vars]` to your private bucket name.
+3. **Change `R2_PRIVATE_BUCKET`** in `wrangler.toml` `[vars]` to your private bucket name. It ships as `hatid-sandbox` (the maintainers' test bucket), which is not yours.
 4. Deploy:
 
    ```sh
@@ -26,8 +26,9 @@ Check the bundle without deploying: `pnpm --filter hatid-cleanup-worker check`.
 
 ## Behaviour
 
+- Each cron invocation runs **one** budgeted `cleanupUnconfirmed` pass; it does not loop until `done`.
 - Each run is capped at `limit: 45` R2 subrequests, which fits the Workers free plan (50 per invocation). On a paid plan, raise `limit` in `src/index.ts` (e.g. 900).
-- The result is logged as JSON. `done: false` is normal when a run hits the limit. It simply continues the next hour, so there is nothing to retry manually.
+- The result is logged as JSON. `done: false` is normal when a run hits the limit. The next hourly invocation picks up where the backlog is, so there is nothing to retry manually.
 
 ## Alternative: R2 lifecycle rules
 

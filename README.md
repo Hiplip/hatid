@@ -50,7 +50,7 @@ Every upload lands in `pending/` in your **private** bucket first. Only a succes
 - `owner` always comes from your server-side `auth`, never from the client.
 - Size and type are validated at issue and re-validated against the real object at confirm.
 - Unconfirmed files are never publicly reachable.
-- Public copies carry no owner, input or app metadata. Only `Content-Type` is kept.
+- Public copies carry no owner, input or app metadata. Only `Content-Type` is kept, plus `Cache-Control` when you set `publicCacheControl`.
 - A non-owner can never cause deletion of someone else's object.
 - Tampered signed metadata is rejected (by R2's signature check, verified live, and again at confirm).
 - A missing key, a failed `auth` and someone else's key all return the same `CONFIRM_REJECTED` (404), so nobody can probe which keys exist.
@@ -131,6 +131,8 @@ export const r2 = createR2Client({
   publicBaseUrl: "https://files.myapp.com", // required when buckets.public is set
   // endpoint: "https://...",  // optional override (default https://<accountId>.r2.cloudflarestorage.com)
   // tokenSecret: "...",       // optional; multipart tokens are derived from the R2 secret by default
+  // publicCacheControl: "public, max-age=31536000, immutable", // optional; Cache-Control set on public copies (none by default)
+  // signContentLength: true,  // default true; signs the exact Content-Length into upload URLs so R2 rejects any other body size
 });
 
 export const uploads = defineUploads(r2, {
@@ -171,11 +173,12 @@ declare function checkRate(owner: string, action: string): Promise<boolean>;
 Rules worth knowing:
 
 - **`auth` is required** on every route (a type error and a runtime `CONFIG` error otherwise). It runs at issue time and again at confirm time, and on every multipart call. Return `null` to reject. Don't throw: a throw surfaces as a 500 `INTERNAL`, not a clean `UNAUTHORIZED`.
-- **`onConfirmed` is at-least-once.** If your process dies after it runs but before the receipt is written, a retry runs it again. Upsert on `file.key`. If it throws, the final copy is removed and the client can retry (`HOOK_FAILED`).
+- **`onConfirmed` is at-least-once.** If your process dies after it runs but before the receipt is written, a retry runs it again, and two confirms racing for the same key can both run it. Upsert on `file.key`. If it throws, the final copy is removed and the client can retry (`HOOK_FAILED`). If storage cannot be checked at that moment, the copy is kept instead (a retry overwrites it), because deleting it could destroy a copy that a concurrent confirm just committed.
 - **`input` and `metadata` are plaintext object metadata**, readable by anyone with bucket access. Put identifiers only in them: never secrets, PII, file names or file content. Together they must stay under 1 KB (checked at issue).
 - **`maxSize` uses 1024-based units**: `"2MB"` is 2,097,152 bytes. `KiB`, `MiB` and `GiB` are accepted as aliases, and a plain number means bytes.
 - **`allowedTypes`** takes exact types or `type/*`. `*/*` is not allowed. The client's content type must be a bare `type/subtype` (no `;charset=...`). Avoid `image/svg+xml` on public routes unless your public domain is isolated from your app, because SVG can carry script.
-- Other options: `datePrefix` (default `true`, adds `<yyyy>/<mm>/` to keys), `keyExtension` (default `false`), `keyFileName` (default `false`; makes the cleaned file name part of the key, so it becomes public on public routes), `expiresIn` (default `"10m"`), `multipart: { threshold, partSize, tokenTtl }` (defaults `"100MB"`, `"10MB"`, `"24h"`).
+- **`prefix`** is lowercase segments `[a-z0-9_-]` separated by `/`. `pending` and `receipts` are reserved as the first segment (hatid keeps its own `pending/` and `receipts/` folders there), so `prefix: "receipts"` is a `CONFIG` error; use something like `"expense-receipts"`.
+- Other options: `datePrefix` (default `true`, adds `<yyyy>/<mm>/` to keys), `keyExtension` (default `false`), `keyFileName` (default `false`; makes the cleaned file name part of the key, so it becomes public on public routes), `expiresIn` (default `"10m"`), `multipart: { threshold, partSize, tokenTtl }` (defaults `"100MB"`, `"10MB"`, `"24h"`). Keep `tokenTtl` at or below the `olderThan` you pass to [cleanup](#cleanup): cleanup aborts multipart uploads older than `olderThan` even if their token is still valid.
 - `onConfirmed` receives `{ file, owner, input, metadata, fileName, ctx }`. `file` is `{ key, visibility, size, contentType, url? }` (`url` only for public files). `fileName` is untrusted and cosmetic: it comes from the client at confirm time and is never used for keys or content-type decisions.
 
 ## Next.js (Vercel)
@@ -234,6 +237,8 @@ export function Attachments({ noteId }: { noteId: string }) {
 }
 ```
 
+`retry(id)` works on items that failed with a retryable error and on cancelled items. If the bytes already reached R2 it only re-runs confirm; otherwise it starts the upload again.
+
 `accept`, `maxSize` and `maxFiles` on `<Dropzone>` and `useUpload` are client-side hints. The server enforces the real limits, and it does not count files per batch: every file is its own issue and confirm, so use `rateLimit` against abuse. Files over the multipart threshold are split into parts automatically, with progress aggregated per file.
 
 A complete app (progress, confirm, list, download, delete, oversize rejection) lives in [`examples/next`](examples/next).
@@ -291,7 +296,7 @@ export default {
 
 Set the credentials as Worker secrets (`wrangler secret put R2_ACCOUNT_ID`, and so on). `createR2Client` must be created per request or lazily from `env`, as above, because bindings and secrets are not available at module scope. The fetch handler is a plain `(Request) => Promise<Response>`, so it also works in Hono, Bun and Deno.
 
-The handler only accepts `POST` with `Content-Type: application/json` (anything else gets `415`) and caps request bodies at 64 KB.
+The handler only accepts `POST` (anything else gets `405`) with `Content-Type: application/json` (anything else gets `415`), and caps request bodies at 64 KB (`413`).
 
 ## tRPC
 
@@ -346,6 +351,8 @@ export function useAttachmentUpload() {
 ```
 
 `createUploadRouter` adds five mutations (`issue`, `confirm`, `signParts`, `complete`, `abort`). The router keeps those five keys in its type, so `trpcClient.upload` from a real tRPC client goes straight into `trpcTransport` with no cast. The procedures themselves take untyped input (hatid has no `@trpc/server` type dependency), so the route checks happen on the client: passing `typeof uploads` to `trpcTransport` makes `useUpload` check route names and `input` shapes. `auth` is still required on every route, even behind `protectedProcedure`, because it is what binds an upload to its owner at issue and confirm.
+
+When a tRPC call itself fails, `trpcTransport` maps an HTTP 401 (for example `protectedProcedure`'s `UNAUTHORIZED`) to `UNAUTHORIZED`, a 429 to `RATE_LIMITED`, other 4xx answers to non-retryable `INVALID_INPUT`, and anything else (5xx, network) to retryable `NETWORK`.
 
 ## Downloads and deletes
 
@@ -443,9 +450,11 @@ export function useVaultUpload(key: CryptoKey) {
 
 Guidelines: set `datePrefix: false`, never use `keyFileName` or `keyExtension` on these routes, keep file names out of `input` and `metadata`, and send `fileName` only if it is already encrypted (base64url) or leave it out.
 
+Encryption hides the content, not who uploaded it or when: the owner id from `auth` and the issue time sit in plaintext object metadata on private files and on their receipts (public copies carry none). Have `auth` return an opaque user id (a random id, not an email or name).
+
 ## Rate limiting
 
-`rateLimit` runs after `auth` (so you can key by owner) and before any storage work, for every action: `"issue" | "confirm" | "signParts" | "complete" | "abort"`. Return `true` to allow, `false` to reject, or `{ retryAfter }` (seconds) to reject with `RATE_LIMITED`.
+`rateLimit` runs after `auth` (so you can key by owner), for every action: `"issue" | "confirm" | "signParts" | "complete" | "abort"`. It runs before any storage work, except that `confirm` first checks that the key exists in storage (see the caveat below). Return `true` to allow, `false` to reject, or `{ retryAfter }` (seconds) to reject with `RATE_LIMITED`.
 
 **Cloudflare Workers**: use the [Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
 
@@ -556,7 +565,7 @@ It deletes `pending/` objects older than `olderThan` (default `"24h"`), `receipt
 
 ## Errors
 
-Server and client share one `HatidError` (`code`, `status`, `retryable`, `retryAfter?`), exported from `@hiplip/hatid/server` and `@hiplip/hatid/react`, with an `isHatidError` guard.
+Errors are `HatidError`s (`code`, `status`, `retryable`, `retryAfter?`), exported from `@hiplip/hatid/server` and `@hiplip/hatid/react`. Identify them with `isHatidError(e)`, which works across entry points (each built entry may carry its own copy of the class, so it checks a shared brand rather than class identity).
 
 | Code | Status | Retryable | Meaning |
 |---|---|---|---|
@@ -564,7 +573,7 @@ Server and client share one `HatidError` (`code`, `status`, `retryable`, `retryA
 | `INVALID_INPUT` | 400 | no | Malformed request, input schema failure, metadata over 1 KB, bad key |
 | `FILE_TOO_LARGE` | 413 | no | Declared size over `maxSize`, or size 0 or less |
 | `INVALID_TYPE` | 415 | no | Type not in `allowedTypes`, or has parameters |
-| `UNAUTHORIZED` | 401 | no | `auth` returned `null` at issue time |
+| `UNAUTHORIZED` | 401 | no | `auth` returned `null` at issue time (or, with `trpcTransport`, the procedure answered 401) |
 | `RATE_LIMITED` | 429 | yes | `rateLimit` rejected; `retryAfter` seconds if given |
 | `CONFIRM_REJECTED` | 404 | no | Missing key, `auth` failed, owner mismatch or bad token (deliberately identical) |
 | `UPLOAD_INVALID` | 422 | no | The upload failed size, type or metadata checks; the object was deleted |
@@ -574,7 +583,7 @@ Server and client share one `HatidError` (`code`, `status`, `retryable`, `retryA
 
 Client-only codes, never sent by the server: `TOO_MANY_FILES` (more files than `maxFiles` in one batch), `NETWORK` (the request failed or the transport threw) and `CANCELED` (the user canceled).
 
-On the wire an error is `{ "error": { "code", "message", "retryAfter"? } }`. `STORAGE`, `HOOK_FAILED` and `CONFIG` send the client a generic message; the real cause goes to `onError`.
+On the wire an error is `{ "error": { "code", "message", "retryAfter"? } }`. `STORAGE`, `HOOK_FAILED`, `CONFIG` and `INTERNAL` send the client a generic message; the real cause goes to `onError`. `onError` may be async; if it throws or rejects, the error is swallowed and the response is unchanged.
 
 ## What hatid is not
 
@@ -591,9 +600,10 @@ pnpm install
 pnpm typecheck
 pnpm test              # unit tests against a fake R2 that verifies real SigV4 signatures
 pnpm build
+pnpm smoke:dist        # checks the built dist/ entries work together
 ```
 
-`pnpm test:integration` runs the backend contract suite against **real** R2 buckets. Use a sandbox or dev bucket only: it sweeps all of `pending/` and leaves `itest/` objects and receipts behind. It is skipped unless the `R2_*` environment variables are set (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_PRIVATE_BUCKET`).
+`pnpm test:integration` runs the backend contract suite against **real** R2 buckets. Use a sandbox or dev bucket only: it sweeps all of `pending/` and leaves `itest/` objects and receipts behind. It is skipped unless the `R2_*` environment variables are set (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_PRIVATE_BUCKET`). Set `R2_PUBLIC_BUCKET` (and optionally `R2_PUBLIC_BASE_URL`) to also run the public-upload case. `pnpm smoke:dist` (after `pnpm build`) imports the built `dist/` entries and checks that errors survive across them.
 
 Releases go through changesets and npm trusted publishing from GitHub Actions.
 

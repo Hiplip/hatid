@@ -6,5 +6,5 @@ compatibility_date = "2026-09-01"
 crons = ["0 * * * *"] # hourly
 
 [vars]
-R2_PRIVATE_BUCKET = "hatid-sandbox"
+R2_PRIVATE_BUCKET = "hatid-sandbox" # CHANGE ME: your private bucket name
 # Secrets (never commit): wrangler secret put R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
