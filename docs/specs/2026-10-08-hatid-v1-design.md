@@ -18,7 +18,7 @@ The package may later become the SDK for a hosted service, the way UploadThing s
 ### Success criteria
 1. `@hiplip/hatid` is published to npm from GitHub Actions with trusted publishing (OIDC, no OTP).
 2. The same server code runs on Cloudflare Workers and on Node 20+/Vercel.
-3. Every safety rule in §2.10 is covered by unit tests (mocked R2 with real signature checking). The backend contract suite also passes against the real `hatid-dev` bucket.
+3. Every safety rule in §2.10 is covered by unit tests (mocked R2 with real signature checking). The backend contract suite also passes against the real `hatid-sandbox` buckets.
 4. `examples/next` demonstrates: upload with progress, confirm, list, download, delete, and an oversize file being rejected.
 5. The README covers bucket setup, the API token, the CORS JSON, the custom domain, and usage on Next.js/Vercel and on Workers.
 
@@ -171,7 +171,7 @@ Signed into the PUT (or attached at `CreateMultipartUpload`) as `x-amz-meta-hati
 | `x-amz-meta-hatid-issued-at` | ms epoch |
 | `x-amz-meta-hatid-meta` | base64url(JSON `{ input, metadata }`), ≤ 1 KB |
 
-`Content-Type` is always signed. `Content-Length` is signed to equal the declared size **if** the R2 test (§6, V3) shows R2 enforces it; either way, size is checked at confirm.
+`Content-Type` is always signed. `Content-Length` is signed to equal the declared size: R2 enforces it (§6, V3, verified). Size is still checked at confirm.
 
 At confirm, an object whose metadata keys differ from exactly this set is `UPLOAD_INVALID` (this guards against unsigned extra metadata if R2 accepts it; §6, V2).
 
@@ -372,7 +372,7 @@ const transport = trpcTransport(trpcClient.upload); // vanilla tRPC client proxy
   - the happy path: issue → upload → confirm → downloadUrl → delete → cleanup;
   - the failure cases: oversize, wrong type, wrong owner, tampered metadata, expired URL, idempotent re-confirm, and `onConfirmed` failure followed by a retry.
 
-  It runs against the fake R2 in `pnpm test`, and against the real `hatid-dev` buckets in `pnpm test:integration`, which is skipped unless the `R2_*` env vars are set.
+  It runs against the fake R2 in `pnpm test`, and against the real `hatid-sandbox` buckets in `pnpm test:integration`, which is skipped unless the `R2_*` env vars are set.
 - **Build.** tsup (ESM + `.d.ts`, one entry per subpath), checked in CI with `publint` and `@arethetypeswrong/cli`.
 - **Tooling.** pnpm workspace (the root package plus `examples/*`), and changesets for versioning.
 - **CI (`.github/workflows/ci.yml`).** On PRs and pushes: typecheck, test and build on Node 20 and 22.
@@ -384,7 +384,7 @@ const transport = trpcTransport(trpcClient.upload); // vanilla tRPC client proxy
 - **README.**
   - What hatid is and isn't.
   - Two-bucket setup. The private bucket must **never** have a custom domain or r2.dev access; the public bucket gets the custom domain.
-  - API token scope.
+  - API token scope: **Object Read & Write** on both buckets, nothing more. The app token never gets Admin / bucket-settings rights.
   - The CORS JSON:
     ```json
     [{ "AllowedOrigins": ["https://your.app", "http://localhost:3000"],
@@ -395,7 +395,7 @@ const transport = trpcTransport(trpcClient.upload); // vanilla tRPC client proxy
          "x-amz-meta-hatid-meta"],
        "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600 }]
     ```
-    It lists the headers explicitly. Whether R2 accepts a `x-amz-meta-hatid-*` wildcard is verified live (§6, V8); if it does, the README uses the shorter form.
+    It lists the headers explicitly (§6, V8 was not tested: least privilege). CORS is set once per bucket in the Cloudflare dashboard, not by the app. The public bucket gets a GET-only CORS rule.
   - Lifecycle rules.
   - Usage on Next.js/Vercel and on Workers.
   - Rate limiting: the Cloudflare Workers Rate Limiting binding, and `@upstash/ratelimit` on Vercel.
@@ -410,18 +410,18 @@ const transport = trpcTransport(trpcClient.upload); // vanilla tRPC client proxy
 
 ## 6. Live R2 verification (run first; decides details above)
 
-These checks run as a throwaway test against `hatid-dev` (private) and `hatid-dev-public`. The code is not committed and objects go under `hatid-spike/`. Requirements: `.env` with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`.
+These checks ran as a throwaway test against `hatid-sandbox` (private) and `hatid-sandbox-public` on 2026-10-08. The code is not committed and objects went under `hatid-spike/`. Requirements: `.env` or environment with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`.
 
-| # | Question | If yes | If no |
-|---|---|---|---|
-| V1 | PUT with altered signed `x-amz-meta-*` values is rejected (403)? | Expected. Keep the design | **Stop**: the design depends on it; report to Philip |
-| V2 | PUT with extra **unsigned** `x-amz-meta-*` headers is rejected? | Exact-key-set check stays as defense in depth | Exact-key-set check at confirm is the guard |
-| V3 | Body ≠ signed `Content-Length` is rejected? | Sign Content-Length | Don't sign it; rely on confirm-time size check |
-| V4 | Expired pre-signed URL is rejected? | Expected | **Stop** and report |
-| V5 | Cross-bucket CopyObject within one account works, including metadata REPLACE? | Keep the design | **Stop and ask Philip** before choosing a fallback (a streaming GET→PUT costs Worker CPU/time) |
-| V6 | Max CopyObject size; is UploadPartCopy supported? | Use the measured limit | Document the max confirmable size |
-| V7 | `DeleteObjects` (batch) and `ListMultipartUploads` supported? | Use them | Fall back to single deletes / lifecycle rules |
-| V8 | Does R2 CORS accept a wildcard `x-amz-meta-hatid-*` in AllowedHeaders? | Short CORS JSON | Explicit list (above) |
+| # | Question | If yes | If no | Observed |
+|---|---|---|---|---|
+| V1 | PUT with altered signed `x-amz-meta-*` values is rejected (403)? | Expected. Keep the design | **Stop**: the design depends on it; report to Philip | ✅ altered → 403 |
+| V2 | PUT with extra **unsigned** `x-amz-meta-*` headers is rejected? | Exact-key-set check stays as defense in depth | Exact-key-set check at confirm is the guard | ✅ rejected (403) |
+| V3 | Body ≠ signed `Content-Length` is rejected? | Sign Content-Length | Don't sign it; rely on confirm-time size check | ✅ enforced → sign Content-Length |
+| V4 | Expired pre-signed URL is rejected? | Expected | **Stop** and report | ✅ 403 |
+| V5 | Cross-bucket CopyObject within one account works, including metadata REPLACE? | Keep the design | **Stop and ask Philip** before choosing a fallback (a streaming GET→PUT costs Worker CPU/time) | ✅ 200, public copy has no `x-amz-meta-*` (first run 403 was token scope; fixed) |
+| V6 | Max CopyObject size; is UploadPartCopy supported? | Use the measured limit | Document the max confirmable size | ✅ UploadPartCopy works (6 MiB as 2 parts). Max single CopyObject not measured; 5 GiB assumed |
+| V7 | `DeleteObjects` (batch) and `ListMultipartUploads` supported? | Use them | Fall back to single deletes / lifecycle rules | ✅ both 200 |
+| V8 | Does R2 CORS accept a wildcard `x-amz-meta-hatid-*` in AllowedHeaders? | Short CORS JSON | Explicit list (above) | Not tested (least privilege: token has no bucket-settings rights) → explicit list |
 
 Results are recorded in `docs/specs/2026-10-08-r2-verification.md`, and this spec is updated to match.
 
