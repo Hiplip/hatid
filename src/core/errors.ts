@@ -30,7 +30,19 @@ const GENERIC: Partial<Record<HatidErrorCode, string>> = {
 
 export type WireError = { code: HatidErrorCode; message: string; retryAfter?: number };
 
+/**
+ * Brand shared by every copy of the class: bundlers may inline HatidError into more than one entry
+ * (e.g. /react and /trpc), so identity checks use this registered symbol, never the class object.
+ */
+const BRAND: unique symbol = Symbol.for("@hiplip/hatid/error") as never;
+
 export class HatidError extends Error {
+  /** `instanceof HatidError` also accepts instances created by another bundle's copy of the class. */
+  static override [Symbol.hasInstance](value: unknown): boolean {
+    return isHatidError(value);
+  }
+
+  readonly [BRAND] = true as const;
   override readonly name = "HatidError";
   readonly code: HatidErrorCode;
   readonly status: number;
@@ -51,8 +63,9 @@ export class HatidError extends Error {
   }
 }
 
+/** True for any HatidError, including one created by another copy of the class (another entry point). */
 export function isHatidError(e: unknown): e is HatidError {
-  return e instanceof HatidError;
+  return typeof e === "object" && e !== null && (e as { [BRAND]?: unknown })[BRAND] === true;
 }
 
 export function toHatidError(e: unknown): HatidError {

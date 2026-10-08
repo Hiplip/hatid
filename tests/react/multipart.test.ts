@@ -4,6 +4,7 @@ import type { MultipartIssue } from "../../src/core/types";
 import { uploadMultipart } from "../../src/react/multipart";
 import type { Transport } from "../../src/react/types";
 import { FakeXhr, createFakeXhr } from "../support/fake-xhr";
+import { foreignHatidError } from "../support/foreign-error";
 
 afterEach(() => FakeXhr.reset());
 
@@ -56,6 +57,13 @@ describe("uploadMultipart", () => {
   it("gives up after the retry budget", async () => {
     FakeXhr.script = (x) => queueMicrotask(() => x.respond(500));
     await expect(run(transport(), { retries: 2 })).rejects.toMatchObject({ code: "NETWORK" });
+  });
+
+  it("does not retry a non-retryable HatidError from another bundle", async () => {
+    const t = transport();
+    t.signParts.mockImplementation(async () => { throw foreignHatidError("CONFIRM_REJECTED"); });
+    await expect(run(t)).rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
+    expect(t.signParts).toHaveBeenCalledTimes(1);
   });
 
   it("fails fast with a CORS hint when the ETag is not exposed", async () => {

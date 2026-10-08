@@ -16,6 +16,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm smoke:dist # imports the built dist/: catches bundling regressions unit tests cannot see
       - run: pnpm lint:pkg
       - run: pnpm --filter hatid-cleanup-worker check
   integration:

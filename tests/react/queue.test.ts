@@ -4,6 +4,7 @@ import { HatidError } from "../../src/core/errors";
 import { UploadQueue, normalizeSource } from "../../src/react/queue";
 import type { Transport } from "../../src/react/types";
 import { FakeXhr, createFakeXhr } from "../support/fake-xhr";
+import { foreignHatidError } from "../support/foreign-error";
 
 afterEach(() => FakeXhr.reset());
 
@@ -127,6 +128,33 @@ describe("UploadQueue", () => {
     expect(results[0]!.status).toBe("success");
     expect(q.getSnapshot().items[0]!.status).toBe("success");
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("keeps a HatidError from another bundle typed and retryable", async () => {
+    const t = transport();
+    t.issue.mockImplementationOnce(async () => { throw foreignHatidError("RATE_LIMITED"); });
+    const [r] = await new UploadQueue({ transport: t, route: "doc", createXhr: createFakeXhr }).upload(file("a"));
+    expect(r!.error).toMatchObject({ code: "RATE_LIMITED", retryable: true });
+  });
+
+  it("falls back to complete when a retried multipart confirm is rejected by another bundle's error", async () => {
+    const complete = vi.fn()
+      .mockImplementationOnce(async () => { throw foreignHatidError("STORAGE"); })
+      .mockImplementationOnce(async (r: { key: string }) => ({ file: fileOf(r.key, 10) }));
+    const t = transport({
+      issue: vi.fn(async () => ({ kind: "multipart" as const, key: "pending/mp", uploadId: "u1", token: "tok", partSize: 5, partCount: 2 })),
+      signParts: vi.fn(async ({ partNumbers }: { partNumbers: number[] }) => ({ parts: partNumbers.map((n) => ({ partNumber: n, url: `https://r2.test/p${n}`, headers: {} })) })),
+      confirm: vi.fn(async () => { throw foreignHatidError("CONFIRM_REJECTED"); }),
+      complete,
+    });
+    FakeXhr.script = (x) => queueMicrotask(() => x.respond(200, { etag: '"e"' }));
+    const q = new UploadQueue({ transport: t, route: "doc", createXhr: createFakeXhr, sleep: async () => {} });
+    const [first] = await q.upload(file("big", 10));
+    expect(first!.error).toMatchObject({ code: "STORAGE", retryable: true });
+    await q.retry(first!.id);
+    expect(t.confirm).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(q.getSnapshot().items[0]).toMatchObject({ status: "success" });
   });
 
   it("maps non-Hatid throws to non-retryable INTERNAL", async () => {

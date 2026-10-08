@@ -1,4 +1,4 @@
-import { HatidError } from "../core/errors";
+import { HatidError, isHatidError } from "../core/errors";
 import { clientContentType } from "../core/mime";
 import type { CompletedPart, UploadedFile } from "../core/types";
 import { uploadMultipart } from "./multipart";
@@ -76,7 +76,7 @@ export class UploadQueue {
     const created = list.map((src, index): Internal => {
       let source: Normalized = { body: new Blob([]), size: 0, type: "application/octet-stream", fileName: undefined };
       let error: HatidError | undefined;
-      try { source = normalizeSource(src); } catch (e) { error = e instanceof HatidError ? e : new HatidError("INVALID_INPUT", String(e)); }
+      try { source = normalizeSource(src); } catch (e) { error = isHatidError(e) ? e : new HatidError("INVALID_INPUT", String(e)); }
       if (!error && max !== undefined && index >= max) error = new HatidError("TOO_MANY_FILES", `At most ${max} files per upload`);
       return {
         id: newId(), batchId, fileName: source.fileName, size: source.size, type: source.type,
@@ -184,10 +184,10 @@ export class UploadQueue {
       this.patch(item, { status: "success", result: file, progress: 1, loaded: item.size });
       try { this.opts.onComplete?.({ id: item.id, file, fileName: item.fileName }); } catch { /* app callback bugs must never change item state */ }
     } catch (e) {
-      if (signal.aborted || (e instanceof HatidError && e.code === "CANCELED")) {
+      if (signal.aborted || (isHatidError(e) && e.code === "CANCELED")) {
         this.patch(item, { status: "canceled", error: new HatidError("CANCELED", "Upload canceled") });
       } else {
-        const error = e instanceof HatidError ? e : new HatidError("INTERNAL", e instanceof Error ? e.message : String(e), { cause: e });
+        const error = isHatidError(e) ? e : new HatidError("INTERNAL", e instanceof Error ? e.message : String(e), { cause: e });
         this.patch(item, { status: "error", error });
         this.opts.onError?.(this.view(item));
       }
@@ -205,7 +205,7 @@ export class UploadQueue {
       return (await transport.confirm({ route, key: item.key!, fileName }, signal)).file;
     } catch (e) {
       const m = item.multipart;
-      if (!m || !(e instanceof HatidError) || e.code !== "CONFIRM_REJECTED") throw e;
+      if (!m || !isHatidError(e) || e.code !== "CONFIRM_REJECTED") throw e;
       return (await transport.complete({ route, key: m.key, uploadId: m.uploadId, token: m.token, parts: m.parts ?? [], fileName }, signal)).file;
     }
   }

@@ -1,4 +1,4 @@
-import { HatidError } from "../core/errors";
+import { HatidError, isHatidError } from "../core/errors";
 import type { CompletedPart, MultipartIssue, SignedPart, UploadedFile } from "../core/types";
 import type { Transport } from "./types";
 import { xhrPut, type XhrFactory } from "./xhr";
@@ -75,7 +75,7 @@ export async function uploadMultipart(o: MultipartUploadOptions): Promise<{ file
       } catch (error) {
         loaded.set(n, 0);
         report();
-        const fatal = inner.signal.aborted || (error instanceof HatidError && !error.retryable) || attempt >= retries;
+        const fatal = inner.signal.aborted || (isHatidError(error) && !error.retryable) || attempt >= retries;
         if (fatal) throw error;
         await sleep(500 * 2 ** attempt);
       }
