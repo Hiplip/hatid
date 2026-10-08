@@ -1,5 +1,5 @@
 import { HatidError } from "../core/errors";
-import { runUploadAction } from "./protocol";
+import { reportError, runUploadAction } from "./protocol";
 import type { Uploads } from "./routes";
 
 export type FetchHandlerOptions<TCtx> = {
@@ -58,7 +58,7 @@ export function createFetchHandler<TCtx>(uploads: Uploads<TCtx, any>, ...args: H
       ctx = options?.context ? await options.context(req) : ({ req } as TCtx);
     } catch (cause) {
       const error = new HatidError("INTERNAL", "context() failed", { cause });
-      try { uploads.options.onError?.({ error, route: undefined, action: undefined }); } catch { /* ignore */ }
+      reportError(uploads, { error, route: undefined, action: undefined });
       return json(500, { error: error.toWire() });
     }
     const outcome = await runUploadAction(uploads, ctx, body);

@@ -67,6 +67,36 @@ describe("createFetchHandler", () => {
       .resolves.toMatchObject({ file: { key: issued.key.slice("pending/".length) } });
   });
 
+  it("an async onError that rejects (or throws) never escapes and the response is unchanged", async () => {
+    const env = makeR2();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      for (const onError of [async () => { throw new Error("sentry down"); }, () => { throw new Error("sync logger bug"); }]) {
+        const uploads = defineUploads(env.r2, {
+          doc: { visibility: "private", prefix: "docs", maxSize: "1MB", allowedTypes: ["text/plain"], auth: () => "alice",
+            onConfirmed: () => { throw new Error("db down"); } },
+        }, { onError });
+        const handler = createFetchHandler(uploads);
+        const post = (body: unknown) => handler(new Request("https://app.test/api/upload", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+        const issued = await (await post({ action: "issue", route: "doc", size: 3, contentType: "text/plain" })).json();
+        await env.browserPut(issued.url, issued.headers, "abc");
+        const res = await post({ action: "confirm", route: "doc", key: issued.key });
+        expect([res.status, (await res.json()).error.code]).toEqual([500, "HOOK_FAILED"]);
+        const broken = createFetchHandler(uploads, { context: () => { throw new Error("no session store"); } });
+        const ctxRes = await broken(new Request("https://app.test/api/upload", {
+          method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+        expect([ctxRes.status, (await ctxRes.json()).error.code]).toEqual([500, "INTERNAL"]);
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("guards method, content type, size and JSON", async () => {
     const t = make();
     const get = await t.handler(new Request("https://app.test/api/upload"));

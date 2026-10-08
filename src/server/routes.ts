@@ -38,7 +38,7 @@ export type UploadRoute<TCtx, S = undefined> = {
 
 export type DefineUploadsOptions = {
   /** Server-side logging for STORAGE, HOOK_FAILED, INTERNAL and CONFIG errors. */
-  onError?: (e: { error: HatidError; route: string | undefined; action: string | undefined }) => void;
+  onError?: (e: { error: HatidError; route: string | undefined; action: string | undefined }) => void | Promise<void>;
 };
 
 export type ResolvedRoute = {
