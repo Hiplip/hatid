@@ -12,6 +12,7 @@ export default defineConfig([
     ...shared,
     entry: { "react/index": "src/react/index.ts" },
     external: ["react", "react-dom"],
+    treeshake: false,
     banner: { js: '"use client";' },
   },
 ]);
