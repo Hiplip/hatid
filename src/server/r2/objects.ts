@@ -2,7 +2,8 @@ import { HatidError } from "../../core/errors";
 import { finalKeyOf, receiptKeyOf } from "../../core/keys";
 import { fromAmzMetaHeaders, toAmzMetaHeaders } from "../../core/metadata";
 import type { BucketKind, InspectResult, ObjectInfo, StorageBackend } from "../backend";
-import { bucketName, expectOk, objectUrl, presign, send, type R2Context } from "./context";
+import { bucketName, encodeKey, expectOk, objectUrl, presign, send, type R2Context } from "./context";
+import { multipartCopy } from "./multipart";
 import { xmlBlocks, xmlText } from "./xml";
 
 type Req<M extends keyof StorageBackend> = StorageBackend[M] extends (r: infer R) => unknown ? R : never;
@@ -40,6 +41,28 @@ export async function inspect(ctx: R2Context, r: Req<"inspect">): Promise<Inspec
   const receipt = await headRaw(ctx, "private", receiptKeyOf(finalKeyOf(r.key)));
   if (receipt) return { state: "confirmed", metadata: receipt.metadata };
   return { state: "missing" };
+}
+
+export async function promote(ctx: R2Context, r: Req<"promote">): Promise<void> {
+  const target: BucketKind = r.visibility === "public" ? "public" : "private";
+  const replace = r.visibility === "public";
+  const publicHeaders: Record<string, string> = {
+    "content-type": r.contentType,
+    ...(ctx.publicCacheControl ? { "cache-control": ctx.publicCacheControl } : {}),
+  };
+  if (r.size > ctx.copyObjectMax) {
+    // multipart copies never carry source metadata, so pass it explicitly for private files
+    return multipartCopy(ctx, target, r, replace ? publicHeaders : { "content-type": r.contentType, ...toAmzMetaHeaders(r.metadata) });
+  }
+  const res = await send(ctx, objectUrl(ctx, target, r.finalKey), {
+    method: "PUT",
+    headers: {
+      ...(replace ? publicHeaders : {}),
+      "x-amz-copy-source": `/${bucketName(ctx, "private")}/${encodeKey(r.pendingKey)}`,
+      "x-amz-metadata-directive": replace ? "REPLACE" : "COPY",
+    },
+  });
+  await expectOk(res, "CopyObject", [200]);
 }
 
 export async function deleteObject(ctx: R2Context, r: Req<"deleteObject">): Promise<void> {
