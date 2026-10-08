@@ -33,16 +33,22 @@ export type WireError = { code: HatidErrorCode; message: string; retryAfter?: nu
 /**
  * Brand shared by every copy of the class: bundlers may inline HatidError into more than one entry
  * (e.g. /react and /trpc), so identity checks use this registered symbol, never the class object.
+ * It lives on the prototype (non-enumerable) and stays out of the declared type, so the HatidError
+ * types of different entries remain mutually assignable and `{ ...err }` does not copy it.
  */
-const BRAND: unique symbol = Symbol.for("@hiplip/hatid/error") as never;
+const BRAND = Symbol.for("@hiplip/hatid/error");
 
 export class HatidError extends Error {
+  static {
+    // inside the class so tree-shaking can never separate the brand from it
+    Object.defineProperty(this.prototype, BRAND, { value: true, enumerable: false, writable: false, configurable: false });
+  }
+
   /** `instanceof HatidError` also accepts instances created by another bundle's copy of the class. */
   static override [Symbol.hasInstance](value: unknown): boolean {
     return isHatidError(value);
   }
 
-  readonly [BRAND] = true as const;
   override readonly name = "HatidError";
   readonly code: HatidErrorCode;
   readonly status: number;
@@ -65,7 +71,9 @@ export class HatidError extends Error {
 
 /** True for any HatidError, including one created by another copy of the class (another entry point). */
 export function isHatidError(e: unknown): e is HatidError {
-  return typeof e === "object" && e !== null && (e as { [BRAND]?: unknown })[BRAND] === true;
+  if (typeof e !== "object" || e === null) return false;
+  const o = e as Record<PropertyKey, unknown>;
+  return o[BRAND] === true && typeof o.toWire === "function";
 }
 
 export function toHatidError(e: unknown): HatidError {

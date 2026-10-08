@@ -3,7 +3,8 @@ import { createNextHandler } from "../../src/next";
 import { createFetchHandler } from "../../src/server/fetch";
 import { defineUploads } from "../../src/server/routes";
 import { decodeSignedMeta } from "../../src/core/metadata";
-import { handleUploadAction } from "../../src/server/protocol";
+import { handleUploadAction, runUploadAction } from "../../src/server/protocol";
+import { HatidError } from "../../src/core/errors";
 import { makeR2 } from "../support/r2";
 
 const user = (req: Request) => /uid=(\w+)/.exec(req.headers.get("cookie") ?? "")?.[1] ?? null;
@@ -95,6 +96,12 @@ describe("createFetchHandler", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+
+  it("a spread copy of a HatidError thrown from auth becomes a clean INTERNAL 500", async () => {
+    const t = make({ auth: () => { throw { ...new HatidError("UNAUTHORIZED", "x") }; } });
+    const outcome = await runUploadAction(t.uploads, { req: new Request("https://app.test") }, { action: "issue", route: "doc", size: 3, contentType: "text/plain" });
+    expect(outcome).toEqual({ ok: false, status: 500, error: { code: "INTERNAL", message: "Internal error." } });
   });
 
   it("guards method, content type, size and JSON", async () => {

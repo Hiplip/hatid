@@ -54,7 +54,7 @@
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
-    "smoke:dist": "node scripts/smoke-dist.mjs",
+    "smoke:dist": "node scripts/smoke-dist.mjs && tsc -p scripts/tsconfig.smoke-dist.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

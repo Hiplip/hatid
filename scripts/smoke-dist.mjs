@@ -31,6 +31,12 @@ await check("instanceof works across bundles", () => {
   assert.equal(new Error("x") instanceof react.HatidError, false);
 });
 
+await check("the brand is not an own key and is not copied by spread", () => {
+  const e = new react.HatidError("UNAUTHORIZED", "x");
+  assert.deepEqual(Object.getOwnPropertySymbols(e), []);
+  assert.equal(server.isHatidError({ ...e }), false);
+});
+
 const rateLimited = { ok: false, status: 429, error: { code: "RATE_LIMITED", message: "slow down", retryAfter: 3 } };
 const fakeClient = (outcome) => {
   const m = { mutate: async () => outcome };

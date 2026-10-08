@@ -352,7 +352,7 @@ export function useAttachmentUpload() {
 
 `createUploadRouter` adds five mutations (`issue`, `confirm`, `signParts`, `complete`, `abort`). The router keeps those five keys in its type, so `trpcClient.upload` from a real tRPC client goes straight into `trpcTransport` with no cast. The procedures themselves take untyped input (hatid has no `@trpc/server` type dependency), so the route checks happen on the client: passing `typeof uploads` to `trpcTransport` makes `useUpload` check route names and `input` shapes. `auth` is still required on every route, even behind `protectedProcedure`, because it is what binds an upload to its owner at issue and confirm.
 
-When a tRPC call itself fails, `trpcTransport` maps an HTTP 401 (for example `protectedProcedure`'s `UNAUTHORIZED`) to `UNAUTHORIZED`, a 429 to `RATE_LIMITED`, other 4xx answers to non-retryable `INVALID_INPUT`, and anything else (5xx, network) to retryable `NETWORK`.
+When a tRPC call itself fails, `trpcTransport` maps an HTTP 401 (for example `protectedProcedure`'s `UNAUTHORIZED`) to `UNAUTHORIZED`, a 429 to retryable `RATE_LIMITED`, a 408 (`TIMEOUT`) or 499 (`CLIENT_CLOSED_REQUEST`) to retryable `NETWORK`, other 4xx answers to non-retryable `INVALID_INPUT`, and anything else (5xx, network) to retryable `NETWORK`.
 
 ## Downloads and deletes
 

@@ -42,4 +42,13 @@ describe("HatidError", () => {
     expect(isHatidError(null)).toBe(false);
     expect(new Error("x") instanceof HatidError).toBe(false);
   });
+
+  it("keeps the brand off the instance: not an own key, not copied by spread, not a branded non-error", () => {
+    const e = new HatidError("UNAUTHORIZED", "x");
+    expect(Object.keys(e)).not.toContain(String(Symbol.for("@hiplip/hatid/error")));
+    expect(Object.getOwnPropertySymbols(e)).toEqual([]);
+    expect(isHatidError({ ...e })).toBe(false);
+    expect(isHatidError({ [Symbol.for("@hiplip/hatid/error")]: true })).toBe(false);
+    expect(toHatidError({ ...e }).code).toBe("INTERNAL");
+  });
 });
