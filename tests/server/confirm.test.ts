@@ -120,4 +120,45 @@ describe("confirmUpload", () => {
     expect(t.fake.keys("priv-bucket").filter((k) => k === finalKey)).toHaveLength(1);
     expect(t.fake.object("priv-bucket", issued.key)).toBeUndefined();
   });
+  it("a failing hook racing a succeeding one never deletes the committed copy", async () => {
+    const t = setup();
+    const issued = await t.issueAndPut();
+    const finalKey = issued.key.slice("pending/".length);
+    let calls = 0;
+    const hook = async () => {
+      if (calls++ === 0) {
+        // the failing run waits until the other run has fully committed (receipt written, pending deleted)
+        for (let i = 0; i < 500 && (!t.fake.object("priv-bucket", `receipts/${finalKey}`) || t.fake.object("priv-bucket", issued.key)); i++) {
+          await new Promise((r) => setTimeout(r, 2));
+        }
+        throw new Error("db down");
+      }
+    };
+    const results = await Promise.allSettled([
+      confirmUpload(t.r2, { key: issued.key, owner: "alice", onConfirmed: hook }),
+      confirmUpload(t.r2, { key: issued.key, owner: "alice", onConfirmed: hook }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(t.fake.object("priv-bucket", finalKey)).toBeDefined();
+    expect(t.fake.object("priv-bucket", `receipts/${finalKey}`)).toBeDefined();
+    expect(t.fake.object("priv-bucket", issued.key)).toBeUndefined();
+    const later = await confirmUpload(t.r2, { key: issued.key, owner: "alice" });
+    expect(later.alreadyConfirmed).toBe(true);
+    expect(t.fake.object("priv-bucket", finalKey)).toBeDefined();
+  });
+
+  it("a receipt with a lingering pending object is treated as confirmed", async () => {
+    const t = setup();
+    const issued = await t.issueAndPut();
+    const finalKey = issued.key.slice("pending/".length);
+    if (issued.kind !== "single") return;
+    await t.r2.writeReceipt({ finalKey, metadata: t.metaOf(issued.headers) });
+    await expect(confirmUpload(t.r2, { key: issued.key, owner: "mallory" })).rejects.toMatchObject({ code: "CONFIRM_REJECTED" });
+    expect(t.fake.object("priv-bucket", issued.key)).toBeDefined();
+    const onConfirmed = vi.fn();
+    const r = await confirmUpload(t.r2, { key: issued.key, owner: "alice", onConfirmed });
+    expect(r.alreadyConfirmed).toBe(true);
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(t.fake.object("priv-bucket", issued.key)).toBeUndefined();
+  });
 });

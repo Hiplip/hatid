@@ -50,6 +50,13 @@ describe("R2 objects", () => {
     expect(await r2.inspect({ key: "pending/a/k" })).toEqual({ state: "confirmed", metadata: signed });
   });
 
+  it("treats a receipt with a lingering pending object as confirmed", async () => {
+    const { r2, fake } = makeR2();
+    fake.putObject("priv-bucket", "pending/a/k", { body: new Uint8Array(3), contentType: "text/plain", meta: signed });
+    await r2.writeReceipt({ finalKey: "a/k", metadata: signed });
+    expect(await r2.inspect({ key: "pending/a/k" })).toEqual({ state: "confirmed", metadata: signed });
+  });
+
   it("heads, deletes (idempotently) and lists with pagination", async () => {
     const { r2, fake } = makeR2();
     for (const k of ["p/1", "p/2", "p/3", "q/1"]) fake.putObject("priv-bucket", k, { body: new Uint8Array(1) });

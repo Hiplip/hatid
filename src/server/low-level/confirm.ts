@@ -50,7 +50,11 @@ export async function runConfirm(backend: StorageBackend, req: { key: unknown; f
 
   const finalKey = finalKeyOf(key);
   const file = fileOf(backend, finalKey, meta);
-  if (state.state === "confirmed") return { file, input: meta.input, metadata: meta.metadata, alreadyConfirmed: true };
+  if (state.state === "confirmed") {
+    // Owner is proven: tidy a pending object left behind by a crash between receipt and delete.
+    await backend.deleteObject({ key, bucket: "private" }).catch(() => {});
+    return { file, input: meta.input, metadata: meta.metadata, alreadyConfirmed: true };
+  }
 
   // The caller is proven to be the owner from here on, so deleting an invalid object is safe.
   const typeOk = normalizeContentType(state.contentType) === meta.type &&
@@ -73,6 +77,10 @@ export async function runConfirm(backend: StorageBackend, req: { key: unknown; f
     try {
       await hooks.onConfirmed({ file, owner, input: meta.input, metadata: meta.metadata, fileName: cleanDisplayName(req.fileName) });
     } catch (cause) {
+      // Never destroy a committed result: if a concurrent run already wrote its receipt, keep the final copy.
+      // Residual window: a run may still write its receipt right after this re-check (onConfirmed is at-least-once).
+      const now = await backend.inspect({ key }).catch(() => null);
+      if (now?.state === "confirmed") return { file, input: meta.input, metadata: meta.metadata, alreadyConfirmed: true };
       await backend.deleteObject({ key: finalKey, bucket: meta.visibility }).catch(() => {});
       throw new HatidError("HOOK_FAILED", `onConfirmed failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
     }

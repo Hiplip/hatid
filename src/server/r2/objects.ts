@@ -36,10 +36,11 @@ export async function head(ctx: R2Context, r: Req<"head">): Promise<ObjectInfo |
 }
 
 export async function inspect(ctx: R2Context, r: Req<"inspect">): Promise<InspectResult> {
-  const pending = await headRaw(ctx, "private", r.key);
-  if (pending) return { state: "pending", size: pending.size, contentType: pending.contentType, metadata: pending.metadata };
+  // The receipt wins: it proves a run committed, even if its pending object still lingers (crash before delete).
   const receipt = await headRaw(ctx, "private", receiptKeyOf(finalKeyOf(r.key)));
   if (receipt) return { state: "confirmed", metadata: receipt.metadata };
+  const pending = await headRaw(ctx, "private", r.key);
+  if (pending) return { state: "pending", size: pending.size, contentType: pending.contentType, metadata: pending.metadata };
   return { state: "missing" };
 }
 
