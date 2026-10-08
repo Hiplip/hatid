@@ -43,6 +43,28 @@ export function createUploadRouter<TProc, TCtx>(opts: {
 type Mutation = { mutate: (input: any, opts?: { signal?: AbortSignal }) => Promise<unknown> };
 export type TrpcUploadClient = { issue: Mutation; confirm: Mutation; signParts: Mutation; complete: Mutation; abort: Mutation };
 
+const httpStatusOf = (e: unknown): number | undefined => {
+  const o = e as { data?: { httpStatus?: unknown }; shape?: { data?: { httpStatus?: unknown } } } | null | undefined;
+  const status = o?.data?.httpStatus ?? o?.shape?.data?.httpStatus;
+  return typeof status === "number" ? status : undefined;
+};
+
+/**
+ * A thrown tRPC client error (duck-typed, no @trpc import). HTTP 4xx answers, e.g. a protectedProcedure's
+ * UNAUTHORIZED, can never succeed on retry, so they are non-retryable; 429 stays retryable; 408, 499 and
+ * everything else (5xx, fetch failures) is a retryable NETWORK error.
+ */
+function fromTrpcFailure(cause: unknown): HatidError {
+  const status = httpStatusOf(cause);
+  if (status === 401) return new HatidError("UNAUTHORIZED", "Not signed in", { cause });
+  if (status === 429) return new HatidError("RATE_LIMITED", "Too many upload requests", { cause });
+  // 408 (TIMEOUT) and 499 (CLIENT_CLOSED_REQUEST) are transient: they stay retryable NETWORK errors below.
+  if (status !== undefined && status >= 400 && status <= 499 && status !== 408 && status !== 499) {
+    return new HatidError("INVALID_INPUT", `tRPC upload request was rejected (HTTP ${status})`, { cause });
+  }
+  return new HatidError("NETWORK", "tRPC upload request failed", { cause });
+}
+
 /** Client transport over your tRPC client, e.g. `trpcTransport<typeof uploads>(trpcClient.upload)`. */
 export function trpcTransport<U = unknown>(client: TrpcUploadClient): Transport<U> {
   async function call<T>(m: Mutation, input: object, signal?: AbortSignal): Promise<T> {
@@ -51,7 +73,7 @@ export function trpcTransport<U = unknown>(client: TrpcUploadClient): Transport<
       outcome = (await m.mutate(input, signal ? { signal } : undefined)) as ActionOutcome | undefined;
     } catch (cause) {
       if (signal?.aborted) throw new HatidError("CANCELED", "Upload canceled", { cause });
-      throw new HatidError("NETWORK", "tRPC upload request failed", { cause });
+      throw fromTrpcFailure(cause);
     }
     if (outcome?.ok === true) return outcome.data as T;
     if (outcome?.ok === false) throw fromWire({ error: outcome.error }, outcome.status);
