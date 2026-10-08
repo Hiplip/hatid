@@ -16,7 +16,11 @@ jobs:
         with: { node-version: 22, cache: pnpm, registry-url: "https://registry.npmjs.org" }
       - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
       - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm build
+      - run: pnpm smoke:dist
+      - run: pnpm lint:pkg
       - uses: changesets/action@v1
         with:
           version: pnpm changeset version
