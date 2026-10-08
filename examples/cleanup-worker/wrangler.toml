@@ -1,0 +1,10 @@
+name = "hatid-cleanup"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[triggers]
+crons = ["0 * * * *"] # hourly
+
+[vars]
+R2_PRIVATE_BUCKET = "hatid-sandbox"
+# Secrets (never commit): wrangler secret put R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
