@@ -4,6 +4,8 @@ An hourly Cloudflare Workers cron that calls `cleanupUnconfirmed` from `@hiplip/
 
 It also proves that `@hiplip/hatid/server` bundles for Workers with no Node built-ins.
 
+Wrangler needs Node.js 22 or newer to run `check` and `deploy`. The deployed Worker itself runs on Cloudflare's runtime, not Node.
+
 ## Deploy
 
 1. Create an R2 API token with **Object Read & Write** on the private bucket only. Nothing else is needed.

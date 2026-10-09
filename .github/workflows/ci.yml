@@ -18,7 +18,9 @@ jobs:
       - run: pnpm build
       - run: pnpm smoke:dist # imports the built dist/: catches bundling regressions unit tests cannot see
       - run: pnpm lint:pkg
-      - run: pnpm --filter hatid-cleanup-worker check
+      # Wrangler needs Node >= 22; the library itself still supports Node 20.
+      - if: matrix.node >= 22
+        run: pnpm --filter hatid-cleanup-worker check
   integration:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
