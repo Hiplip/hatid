@@ -1,0 +1,30 @@
+name: Release
+on:
+  push: { branches: [main] }
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+permissions:
+  contents: write       # version PR + tags
+  pull-requests: write  # version PR
+  id-token: write       # npm trusted publishing (OIDC)
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, registry-url: "https://registry.npmjs.org" }
+      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm smoke:dist
+      - run: pnpm lint:pkg
+      - uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm release
+          createGithubReleases: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
