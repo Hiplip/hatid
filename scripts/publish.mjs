@@ -14,5 +14,6 @@ if (published) {
 }
 execSync("pnpm build", { stdio: "inherit" });
 execSync("npm publish --access public --provenance", { stdio: "inherit" });
-execSync(`git tag v${pkg.version}`, { stdio: "inherit" });
-console.log(`New tag: ${pkg.name}@${pkg.version}`);
+// changesets/action pushes `<name>@<version>` (see the "New tag:" line below), so the tag must use that name.
+execSync(`git tag ${spec}`, { stdio: "inherit" });
+console.log(`New tag: ${spec}`);
