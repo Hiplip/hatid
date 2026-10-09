@@ -1,6 +1,6 @@
 {
   "name": "@hiplip/hatid",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Direct-to-R2 file uploads for React and the edge. Your bucket, your rules.",
   "license": "MIT",
   "type": "module",
